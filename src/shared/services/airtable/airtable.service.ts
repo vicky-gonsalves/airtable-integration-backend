@@ -9,6 +9,7 @@ import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 import { Ticket } from 'src/shared/schemas/ticket.schema';
 import { Revision } from 'src/shared/schemas/revision.schema';
+import { AirtableFormulaParser } from 'src/shared/utils/airtable-formula.parser';
 
 @Injectable()
 export class AirtableService {
@@ -244,8 +245,60 @@ export class AirtableService {
     return { success: true };
   }
 
-  async getAllTickets() {
-    return this.ticketModel.find().exec();
+  async getAllTickets(query: any = {}) {
+    const {
+      baseId,
+      page = '0',
+      limit = '20',
+      search = '',
+      sortBy = '',
+      sortOrder = 'asc',
+      formula,
+    } = query;
+
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const skip = pageNum * limitNum;
+
+    const rootConditions: any[] = [];
+
+    if (baseId) {
+      rootConditions.push({ baseId });
+    }
+
+    if (search) {
+      rootConditions.push({ $or: [{ airtableId: { $regex: search, $options: 'i' } }] });
+    }
+
+    if (formula) {
+      try {
+        const parsedMongoQuery = AirtableFormulaParser.parse(formula);
+        if (Object.keys(parsedMongoQuery).length > 0) {
+          rootConditions.push(parsedMongoQuery);
+        }
+      } catch (e) {
+        console.error('Failed to parse Airtable Formula', e);
+      }
+    }
+
+    const filterQuery = rootConditions.length > 0 ? { $and: rootConditions } : {};
+
+    const sortObj: any = {};
+    if (sortBy) {
+      const sortKey = ['airtableId', 'baseId', 'tableId', 'createdAt', 'updatedAt'].includes(sortBy)
+        ? sortBy
+        : `fields.${sortBy}`;
+      sortObj[sortKey] = sortOrder === 'desc' ? -1 : 1;
+    } else {
+      sortObj['_id'] = -1;
+    }
+
+    const [data, total] = await Promise.all([
+      this.ticketModel.find(filterQuery).sort(sortObj).skip(skip).limit(limitNum).exec(),
+      this.ticketModel.countDocuments(filterQuery).exec(),
+    ]);
+
+    return { data, total, page: pageNum, limit: limitNum };
   }
 
   async getAllRevisions() {

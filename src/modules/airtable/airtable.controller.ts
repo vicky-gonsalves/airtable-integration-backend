@@ -67,8 +67,8 @@ export class AirtableController {
   }
 
   @Get('tickets')
-  async getTickets() {
-    return this.airtableService.getAllTickets();
+  async getTickets(@Query() query: any) {
+    return this.airtableService.getAllTickets(query);
   }
 
   @Get('revisions')
