@@ -147,11 +147,7 @@ export class AirtableService {
 
       const finalUrl = response.request?.res?.responseUrl || '';
 
-      if (finalUrl.includes('airtable.com/login')) {
-        return false;
-      }
-
-      return true;
+      return !finalUrl.includes('airtable.com/login');
     } catch (error) {
       console.log(error);
       return false;

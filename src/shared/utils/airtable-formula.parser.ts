@@ -18,14 +18,14 @@ export class AirtableFormulaParser {
       return { $or: this.splitByComma(inner).map((p) => this.parse(p)) };
     }
 
-    const findMatch = formula.match(/^(?:FIND|SEARCH)\(['"]([^'"]+)['"],\s*\{([^}]+)\}\)$/);
+    const findMatch = formula.match(/^(?:FIND|SEARCH)\(['"]([^'"]+)['"],\s*\{([^}]+)}\)$/);
     if (findMatch) {
       const val = findMatch[1];
       const field = findMatch[2];
       return { [this.getDbKey(field)]: { $regex: val, $options: 'i' } };
     }
 
-    const opMatch = formula.match(/^\{([^}]+)\}\s*(=|!=|>|<|>=|<=)\s*(.+)$/);
+    const opMatch = formula.match(/^\{([^}]+)}\s*(=|!=|>|<|>=|<=)\s*(.+)$/);
     if (opMatch) {
       const field = opMatch[1].trim();
       const op = opMatch[2].trim();
