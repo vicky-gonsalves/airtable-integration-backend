@@ -87,6 +87,8 @@ export class AirtableService {
         this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
       );
 
+      console.log(JSON.stringify(response.data, null, 2));
+
       for (const record of response.data.records) {
         await this.ticketModel.findOneAndUpdate(
           { airtableId: record.id },
@@ -343,6 +345,8 @@ export class AirtableService {
           { 'fields.Name': { $regex: search, $options: 'i' } },
           { 'fields.Title': { $regex: search, $options: 'i' } },
           { 'fields.Assignee': { $regex: search, $options: 'i' } },
+          { 'fields.Assignee.name': { $regex: search, $options: 'i' } },
+          { 'fields.Assignee.email': { $regex: search, $options: 'i' } },
           { 'fields.Description': { $regex: search, $options: 'i' } },
           { 'fields.Status': { $regex: search, $options: 'i' } },
           { 'fields.Priority': { $regex: search, $options: 'i' } },

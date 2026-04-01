@@ -22,7 +22,15 @@ export class AirtableFormulaParser {
     if (findMatch) {
       const val = findMatch[1];
       const field = findMatch[2];
-      return { [this.getDbKey(field)]: { $regex: val, $options: 'i' } };
+      const dbKey = this.getDbKey(field);
+
+      return {
+        $or: [
+          { [dbKey]: { $regex: val, $options: 'i' } },
+          { [`${dbKey}.name`]: { $regex: val, $options: 'i' } },
+          { [`${dbKey}.email`]: { $regex: val, $options: 'i' } },
+        ],
+      };
     }
 
     const opMatch = formula.match(/^\{([^}]+)}\s*(=|!=|>|<|>=|<=)\s*(.+)$/);
@@ -34,17 +42,32 @@ export class AirtableFormulaParser {
 
       if (valStr === 'BLANK()') {
         if (op === '=')
-          return { $or: [{ [dbKey]: { $exists: false } }, { [dbKey]: null }, { [dbKey]: '' }] };
-        if (op === '!=') return { [dbKey]: { $exists: true, $nin: [null, ''] } };
+          return {
+            $or: [
+              { [dbKey]: { $exists: false } },
+              { [dbKey]: null },
+              { [dbKey]: '' },
+              { [dbKey]: [] },
+            ],
+          };
+        if (op === '!=') return { [dbKey]: { $exists: true, $nin: [null, '', []] } };
       }
 
       const val = valStr.replace(/^['"]|['"]$/g, '');
 
       switch (op) {
         case '=':
-          return { [dbKey]: val };
+          return {
+            $or: [{ [dbKey]: val }, { [`${dbKey}.name`]: val }, { [`${dbKey}.email`]: val }],
+          };
         case '!=':
-          return { [dbKey]: { $ne: val } };
+          return {
+            $and: [
+              { [dbKey]: { $ne: val } },
+              { [`${dbKey}.name`]: { $ne: val } },
+              { [`${dbKey}.email`]: { $ne: val } },
+            ],
+          };
         case '>':
           return { [dbKey]: { $gt: isNaN(Number(val)) ? val : Number(val) } };
         case '<':
