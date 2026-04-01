@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Query, Body, Res, Req, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, Res, Req, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AirtableService } from 'src/shared/services/airtable/airtable.service';
+import { AirtableAuthGuard } from 'src/shared/guards/airtable-auth/airtable-auth.guard';
 
 @Controller('airtable')
 export class AirtableController {
@@ -25,19 +26,34 @@ export class AirtableController {
     res.redirect('http://localhost:4200/');
   }
 
+  @Get('auth/status')
+  @UseGuards(AirtableAuthGuard)
+  checkAuthStatus() {
+    return {
+      authenticated: true,
+      message: 'Airtable access token is valid.',
+    };
+  }
+
   @Get('bases')
+  @UseGuards(AirtableAuthGuard)
   async getBases(@Req() req: Request) {
-    return this.airtableService.fetchBases(this.getToken(req));
+    const token = req.cookies['airtable_access_token'];
+    return this.airtableService.fetchBases(token);
   }
 
   @Get('tables')
+  @UseGuards(AirtableAuthGuard)
   async getTables(@Req() req: Request, @Query('baseId') baseId: string) {
-    return this.airtableService.fetchTables(baseId, this.getToken(req));
+    const token = req.cookies['airtable_access_token'];
+    return this.airtableService.fetchTables(baseId, token);
   }
 
   @Post('sync')
+  @UseGuards(AirtableAuthGuard)
   async syncTickets(@Req() req: Request, @Body() body: { baseId: string; tableId: string }) {
-    return this.airtableService.fetchAndStoreTickets(body.baseId, body.tableId, this.getToken(req));
+    const token = req.cookies['airtable_access_token'];
+    return this.airtableService.fetchAndStoreTickets(body.baseId, body.tableId, token);
   }
 
   @Post('scrape/auth')
@@ -63,12 +79,5 @@ export class AirtableController {
   @Get('users')
   async getUsers(@Query('accessToken') accessToken: string) {
     return this.airtableService.fetchUsers(accessToken);
-  }
-
-  private getToken(req: Request): string {
-    const token = req.cookies['airtable_access_token'];
-    if (!token)
-      throw new BadRequestException('Not authenticated with Airtable. Please connect first.');
-    return token;
   }
 }

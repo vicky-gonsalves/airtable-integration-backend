@@ -61,6 +61,20 @@ export class AirtableService {
     return response.data;
   }
 
+  async validateToken(accessToken: string): Promise<boolean> {
+    try {
+      await firstValueFrom(
+        this.httpService.get('https://api.airtable.com/v0/meta/whoami', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+      return true;
+    } catch (error) {
+      console.log(error);
+      return false;
+    }
+  }
+
   async fetchAndStoreTickets(baseId: string, tableId: string, accessToken: string) {
     let offset: string | undefined = undefined;
     let keepFetching = true;
