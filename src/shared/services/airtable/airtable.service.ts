@@ -87,8 +87,6 @@ export class AirtableService {
         this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
       );
 
-      console.log(JSON.stringify(response.data, null, 2));
-
       for (const record of response.data.records) {
         await this.ticketModel.findOneAndUpdate(
           { airtableId: record.id },
