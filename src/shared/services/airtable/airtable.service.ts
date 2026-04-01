@@ -267,7 +267,17 @@ export class AirtableService {
     }
 
     if (search) {
-      rootConditions.push({ $or: [{ airtableId: { $regex: search, $options: 'i' } }] });
+      rootConditions.push({
+        $or: [
+          { airtableId: { $regex: search, $options: 'i' } },
+          { 'fields.Name': { $regex: search, $options: 'i' } },
+          { 'fields.Title': { $regex: search, $options: 'i' } },
+          { 'fields.Assignee': { $regex: search, $options: 'i' } },
+          { 'fields.Description': { $regex: search, $options: 'i' } },
+          { 'fields.Status': { $regex: search, $options: 'i' } },
+          { 'fields.Priority': { $regex: search, $options: 'i' } },
+        ],
+      });
     }
 
     if (formula) {
