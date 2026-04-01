@@ -377,10 +377,22 @@ export class AirtableService {
       sortObj['_id'] = -1;
     }
 
-    const [data, total] = await Promise.all([
-      this.ticketModel.find(filterQuery).sort(sortObj).skip(skip).limit(limitNum).exec(),
+    const [rawData, total] = await Promise.all([
+      this.ticketModel
+        .find(filterQuery)
+        .select('-__v -_id -baseId -tableId')
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limitNum)
+        .lean()
+        .exec(),
       this.ticketModel.countDocuments(filterQuery).exec(),
     ]);
+
+    const data = rawData.map((item: any) => {
+      const { fields, ...rest } = item;
+      return { ...rest, ...(fields || {}) };
+    });
 
     return { data, total, page: pageNum, limit: limitNum };
   }
