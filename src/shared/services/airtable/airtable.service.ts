@@ -154,96 +154,166 @@ export class AirtableService {
     }
   }
 
-  async scrapeRevisionHistory(baseId: string, tableId: string) {
-    const isValid = await this.checkCookieValidity();
-    if (!isValid) throw new BadRequestException('Cookies expired. Redo MFA.');
+  async scrapeRevisionHistory(baseId: string, tableId: string, cursor?: string) {
+    console.log(
+      `[Scraper] Starting scrape for Base: ${baseId}, Table: ${tableId}, Cursor: ${cursor || 'None'}`,
+    );
 
-    const tickets = await this.ticketModel.find({ baseId, tableId }).limit(200);
+    const isValid = await this.checkCookieValidity();
+    if (!isValid) {
+      console.error('[Scraper Error] Cookies expired or invalid.');
+      throw new BadRequestException('Cookies expired. Redo MFA.');
+    }
+
+    const query: any = { baseId, tableId };
+    if (cursor) {
+      query._id = { $gt: cursor };
+    }
+
+    const batchSize = 50;
+    const tickets = await this.ticketModel.find(query).sort({ _id: 1 }).limit(batchSize);
+
+    console.log(`[Scraper] Found ${tickets.length} tickets to process in this batch.`);
+
+    if (tickets.length === 0) {
+      console.log('[Scraper] No more tickets to process.');
+      return { success: true, hasMore: false, cursor: null };
+    }
+
     const cookieString = this.airtableCookies.map((c) => `${c.name}=${c.value}`).join('; ');
 
     for (const ticket of tickets) {
-      const params = {
-        limit: 10,
-        offsetV2: null,
-        shouldReturnDeserializedActivityItems: true,
-        shouldIncludeRowActivityOrCommentUserObjById: true,
-      };
+      let offsetV2 = null;
+      let hasMoreHistory = true;
 
-      const encodedParams = encodeURIComponent(JSON.stringify(params));
-      const url = `https://airtable.com/v0.3/row/${ticket.airtableId}/readRowActivitiesAndComments?stringifiedObjectParams=${encodedParams}`;
+      console.log(`[Scraper] Processing ticket: ${ticket.airtableId}`);
 
-      try {
-        const response = await firstValueFrom(
-          this.httpService.get(url, {
-            headers: {
-              Cookie: cookieString,
-              'x-airtable-application-id': baseId,
-              'x-airtable-inter-service-client': 'webClient',
-              'x-requested-with': 'XMLHttpRequest',
-              'x-time-zone': 'Asia/Calcutta',
-              'x-user-locale': 'en',
-              Accept: 'application/json, text/javascript, */*; q=0.01',
-              'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-              Referer: `https://airtable.com/${baseId}/${tableId}`,
-            },
-          }),
-        );
+      while (hasMoreHistory) {
+        const params = {
+          limit: 100,
+          offsetV2: offsetV2,
+          shouldReturnDeserializedActivityItems: true,
+          shouldIncludeRowActivityOrCommentUserObjById: true,
+        };
 
-        if (
-          response.data &&
-          response.data.msg === 'SUCCESS' &&
-          response.data.data.rowActivityInfoById
-        ) {
-          const activitiesObj = response.data.data.rowActivityInfoById;
-          const parsedActivities: any[] = [];
+        const encodedParams = encodeURIComponent(JSON.stringify(params));
+        const url = `https://airtable.com/v0.3/row/${ticket.airtableId}/readRowActivitiesAndComments?stringifiedObjectParams=${encodedParams}`;
 
-          for (const [uuid, activityInfo] of Object.entries<any>(activitiesObj)) {
-            if (!activityInfo.diffRowHtml) continue;
+        try {
+          console.log(
+            `[Scraper] Fetching activities for ${ticket.airtableId} with offset: ${offsetV2 || 'Initial'}`,
+          );
 
-            const $ = cheerio.load(activityInfo.diffRowHtml);
+          const response = await firstValueFrom(
+            this.httpService.get(url, {
+              headers: {
+                Cookie: cookieString,
+                'x-airtable-application-id': baseId,
+                'x-airtable-inter-service-client': 'webClient',
+                'x-requested-with': 'XMLHttpRequest',
+                'x-time-zone': 'Asia/Calcutta',
+                'x-user-locale': 'en',
+                Accept: 'application/json, text/javascript, */*; q=0.01',
+                'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+                Referer: `https://airtable.com/${baseId}/${tableId}`,
+              },
+            }),
+          );
 
-            $('.historicalCellContainer').each((i, el) => {
-              const columnType = $(el).find('div[columnId]').text().trim();
+          if (
+            response.data &&
+            response.data.msg === 'SUCCESS' &&
+            response.data.data.rowActivityInfoById
+          ) {
+            const activitiesObj = response.data.data.rowActivityInfoById;
+            const parsedActivities: any[] = [];
 
-              if (columnType === 'Assignee' || columnType === 'Status') {
-                let oldValue = $(el).find('span.strikethrough').text().trim();
-                let newValue = $(el).find('span.colors-background-success').text().trim();
+            for (const [uuid, activityInfo] of Object.entries<any>(activitiesObj)) {
+              if (!activityInfo.diffRowHtml) continue;
 
-                if (oldValue.includes('\xa0') || oldValue === '') oldValue = 'None';
-                if (newValue.includes('\xa0') || newValue === '') newValue = 'None';
+              const $ = cheerio.load(activityInfo.diffRowHtml);
 
-                parsedActivities.push({
-                  uuid: uuid,
-                  issueId: ticket.airtableId,
-                  columnType: columnType,
-                  oldValue: oldValue,
-                  newValue: newValue,
-                  createdDate: new Date(activityInfo.createdTime),
-                  authoredBy: activityInfo.originatingUserId,
-                });
-              }
-            });
+              $('.historicalCellContainer').each((i, el) => {
+                const columnType = $(el).find('div[columnId]').text().trim();
+
+                if (columnType === 'Assignee' || columnType === 'Status') {
+                  let oldValue = $(el).find('span.strikethrough').text().trim();
+                  let newValue = $(el).find('span.colors-background-success').text().trim();
+
+                  if (oldValue.includes('\xa0') || oldValue === '') oldValue = 'None';
+                  if (newValue.includes('\xa0') || newValue === '') newValue = 'None';
+
+                  parsedActivities.push({
+                    uuid: uuid,
+                    issueId: ticket.airtableId,
+                    columnType: columnType,
+                    oldValue: oldValue,
+                    newValue: newValue,
+                    createdDate: new Date(activityInfo.createdTime),
+                    authoredBy: activityInfo.originatingUserId,
+                  });
+                }
+              });
+            }
+
+            console.log(
+              `[Scraper] Parsed ${parsedActivities.length} target activities for ticket ${ticket.airtableId}.`,
+            );
+
+            for (const act of parsedActivities) {
+              await this.revisionModel.findOneAndUpdate({ uuid: act.uuid }, act, { upsert: true });
+            }
+
+            if (response.data.data.offsetV2) {
+              offsetV2 = response.data.data.offsetV2;
+              console.log(
+                `[Scraper] More history found for ${ticket.airtableId}. Next offset: ${offsetV2}`,
+              );
+            } else if (response.data.data.pagination && response.data.data.pagination.offsetV2) {
+              offsetV2 = response.data.data.pagination.offsetV2;
+              console.log(
+                `[Scraper] More history found for ${ticket.airtableId}. Next offset: ${offsetV2}`,
+              );
+            } else {
+              console.log(`[Scraper] Completed history for ticket ${ticket.airtableId}.`);
+              hasMoreHistory = false;
+            }
+          } else {
+            console.log(`[Scraper] No valid activity data found for ticket ${ticket.airtableId}.`);
+            hasMoreHistory = false;
           }
 
-          for (const act of parsedActivities) {
-            await this.revisionModel.findOneAndUpdate({ uuid: act.uuid }, act, { upsert: true });
+          if (hasMoreHistory) {
+            await new Promise((resolve) => setTimeout(resolve, 300));
           }
+        } catch (err: any) {
+          console.error(
+            `[Scraper Error] Failed to scrape ticket ${ticket.airtableId}:`,
+            err.response?.status,
+            err.response?.data,
+          );
+          hasMoreHistory = false;
         }
-      } catch (err: any) {
-        console.error(
-          `Failed to scrape ticket ${ticket.airtableId}:`,
-          err.response?.status,
-          err.response?.data,
-        );
       }
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
-    return { success: true };
+
+    const hasMore = tickets.length === batchSize;
+    const nextCursor = hasMore ? tickets[tickets.length - 1]._id.toString() : null;
+
+    console.log(
+      `[Scraper] Batch complete. Has more tickets: ${hasMore}, Next Cursor: ${nextCursor}`,
+    );
+
+    return { success: true, hasMore, cursor: nextCursor };
   }
 
   async getAllTickets(query: any = {}) {
     const {
       baseId,
+      tableId,
       page = '0',
       limit = '20',
       search = '',
@@ -260,6 +330,10 @@ export class AirtableService {
 
     if (baseId) {
       rootConditions.push({ baseId });
+    }
+
+    if (tableId) {
+      rootConditions.push({ tableId });
     }
 
     if (search) {

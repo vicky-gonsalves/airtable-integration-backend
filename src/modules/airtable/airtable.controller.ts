@@ -72,8 +72,8 @@ export class AirtableController {
   }
 
   @Post('scrape/run')
-  async runScraper(@Body() body: { baseId: string; tableId: string }) {
-    return this.airtableService.scrapeRevisionHistory(body.baseId, body.tableId);
+  async runScraper(@Body() body: { baseId: string; tableId: string; cursor?: string }) {
+    return this.airtableService.scrapeRevisionHistory(body.baseId, body.tableId, body.cursor);
   }
 
   @Get('tickets')
