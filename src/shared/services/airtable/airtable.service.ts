@@ -91,7 +91,7 @@ export class AirtableService {
         await this.ticketModel.findOneAndUpdate(
           { airtableId: record.id },
           { airtableId: record.id, baseId, tableId, fields: record.fields },
-          { upsert: true, new: true },
+          { upsert: true, returnDocument: 'after' },
         );
       }
 
