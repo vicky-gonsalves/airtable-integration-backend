@@ -82,8 +82,8 @@ export class AirtableController {
   }
 
   @Get('revisions')
-  async getRevisions() {
-    return this.airtableService.getAllRevisions();
+  async getRevisions(@Query() query: any) {
+    return this.airtableService.getRevisions(query);
   }
 
   @Get('users')

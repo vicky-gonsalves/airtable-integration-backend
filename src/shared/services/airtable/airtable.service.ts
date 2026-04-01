@@ -307,8 +307,25 @@ export class AirtableService {
     return { data, total, page: pageNum, limit: limitNum };
   }
 
-  async getAllRevisions() {
-    return this.revisionModel.find().exec();
+  async getRevisions(query: any = {}) {
+    const { issueId, page = '0', limit = '20' } = query;
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const skip = pageNum * limitNum;
+
+    const filterQuery = issueId ? { issueId } : {};
+
+    const [data, total] = await Promise.all([
+      this.revisionModel
+        .find(filterQuery)
+        .sort({ createdDate: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .exec(),
+      this.revisionModel.countDocuments(filterQuery).exec(),
+    ]);
+
+    return { data, total, page: pageNum, limit: limitNum };
   }
 
   async fetchBases(accessToken: string) {
