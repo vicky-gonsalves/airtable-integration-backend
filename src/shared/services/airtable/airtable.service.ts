@@ -340,4 +340,8 @@ export class AirtableService {
       return { users: [] };
     }
   }
+
+  clearCookies() {
+    this.airtableCookies = [];
+  }
 }

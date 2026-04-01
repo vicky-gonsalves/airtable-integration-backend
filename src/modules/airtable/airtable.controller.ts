@@ -35,6 +35,16 @@ export class AirtableController {
     };
   }
 
+  @Post('auth/logout')
+  logout(@Res() res: Response) {
+    this.airtableService.clearCookies();
+    res.clearCookie('airtable_access_token', {
+      httpOnly: true,
+      sameSite: 'lax',
+    });
+    return res.status(200).json({ success: true, message: 'Logged out successfully' });
+  }
+
   @Get('bases')
   @UseGuards(AirtableAuthGuard)
   async getBases(@Req() req: Request) {
