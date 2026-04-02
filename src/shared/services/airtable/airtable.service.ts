@@ -237,32 +237,76 @@ export class AirtableService {
               response.data.data.rowActivityInfoById
             ) {
               const activitiesObj = response.data.data.rowActivityInfoById;
+              console.log(JSON.stringify(activitiesObj));
               const parsedActivities: any[] = [];
 
               for (const [uuid, activityInfo] of Object.entries<any>(activitiesObj)) {
                 if (!activityInfo.diffRowHtml) continue;
 
+                if (activityInfo.groupType === 'columnConfig') continue;
+
                 const $ = cheerio.load(activityInfo.diffRowHtml);
 
                 $('.historicalCellContainer').each((i, el) => {
-                  const columnType = $(el).find('div[columnId]').text().trim();
+                  const cell = $(el);
+                  const columnType = cell.find('div[columnId]').text().trim();
 
-                  if (columnType === 'Assignee' || columnType === 'Status') {
-                    let oldValue = $(el).find('span.strikethrough').text().trim();
-                    let newValue = $(el).find('span.colors-background-success').text().trim();
+                  if (['Assignee', 'Status', 'Title'].includes(columnType)) {
+                    const oldValues: string[] = [];
+                    const newValues: string[] = [];
 
-                    if (oldValue.includes('\xa0') || oldValue === '') oldValue = 'None';
-                    if (newValue.includes('\xa0') || newValue === '') newValue = 'None';
+                    const extractCleanText = (node: cheerio.Cheerio<any>) => {
+                      const clone = node.clone();
+                      clone.find('.circle, svg').remove();
+                      const text = clone.text().replace(/\xa0/g, ' ').replace(/\s+/g, ' ').trim();
+                      return text;
+                    };
 
-                    parsedActivities.push({
-                      uuid: uuid,
-                      issueId: ticket.airtableId,
-                      columnType: columnType,
-                      oldValue: oldValue,
-                      newValue: newValue,
-                      createdDate: new Date(activityInfo.createdTime),
-                      authoredBy: activityInfo.originatingUserId,
-                    });
+                    if (cell.find('.textDiff').length > 0) {
+                      cell.find('.colors-background-negative, .strikethrough').each((_, node) => {
+                        const t = extractCleanText($(node));
+                        if (t) oldValues.push(t);
+                      });
+                      cell.find('.colors-background-success').each((_, node) => {
+                        const t = extractCleanText($(node));
+                        if (t) newValues.push(t);
+                      });
+                    } else if (cell.find('.pill').length > 0) {
+                      cell.find('.pill').each((_, node) => {
+                        const n = $(node);
+                        const isOld =
+                          n.hasClass('strikethrough') ||
+                          n.attr('style')?.includes('line-through') ||
+                          n.closest('.strikethrough').length > 0;
+
+                        const t = extractCleanText(n);
+                        if (t) {
+                          if (isOld) oldValues.push(t);
+                          else newValues.push(t);
+                        }
+                      });
+                    } else if (cell.find('.nullToValue').length > 0) {
+                      const t = extractCleanText(cell.find('.nullToValue'));
+                      if (t) newValues.push(t);
+                    } else if (cell.find('.valueToNull').length > 0) {
+                      const t = extractCleanText(cell.find('.valueToNull'));
+                      if (t) oldValues.push(t);
+                    }
+
+                    const finalOld = oldValues.length > 0 ? oldValues.join(', ') : 'None';
+                    const finalNew = newValues.length > 0 ? newValues.join(', ') : 'None';
+
+                    if (finalOld !== finalNew) {
+                      parsedActivities.push({
+                        uuid: uuid,
+                        issueId: ticket.airtableId,
+                        columnType: columnType,
+                        oldValue: finalOld,
+                        newValue: finalNew,
+                        createdDate: new Date(activityInfo.createdTime),
+                        authoredBy: activityInfo.originatingUserId,
+                      });
+                    }
                   }
                 });
               }
