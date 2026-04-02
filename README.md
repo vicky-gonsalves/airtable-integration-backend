@@ -2,6 +2,14 @@
 
 This project is a robust [NestJS](https://github.com/nestjs/nest) backend application designed to integrate with Airtable. It provides OAuth2 authentication, synchronizes Airtable records (tickets) and users to a local MongoDB database, and utilizes a headless browser scraper (Puppeteer + Cheerio) to extract detailed revision history that isn't readily available through standard APIs.
 
+## Ticket snapshot from database:
+<img width="1582" height="990" alt="image" src="https://github.com/user-attachments/assets/4004b94c-3c1e-4bf7-8c97-3479b049bc76" />
+
+
+## Revision snapshot from database:
+<img width="1601" height="986" alt="image" src="https://github.com/user-attachments/assets/45af635a-7dcb-461f-ac38-f5ec1d2ede4b" />
+
+
 ## Key Features
 
 - **Airtable OAuth2 Integration:** Securely authenticate users and manage access tokens via PKCE authorization flow.
