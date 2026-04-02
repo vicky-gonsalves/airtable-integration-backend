@@ -176,15 +176,52 @@ export class AirtableService {
       await page.type('input[name="password"]', password);
       await page.click('button[type="submit"]');
 
-      await page.waitForSelector('input[name="code"]');
+      const loginError = await Promise.race([
+        page
+          .waitForSelector('input[name="code"]', { visible: true, timeout: 15000 })
+          .then(() => null),
+        page
+          .waitForSelector('.colors-foreground-accent-negative', { visible: true, timeout: 15000 })
+          .then(async (svgEl) => {
+            return page.evaluate((el) => {
+              const container = el?.closest('.flex.items-center');
+              const textEl = container?.querySelector('div[role="paragraph"]');
+              return textEl ? textEl.textContent : 'Invalid credentials provided.';
+            }, svgEl);
+          }),
+      ]);
+
+      if (loginError) {
+        throw new BadRequestException(loginError);
+      }
+
       await page.type('input[name="code"]', mfaCode);
       await page.click('::-p-text(Submit)');
-      await page.waitForNavigation();
+
+      const mfaError = await Promise.race([
+        page.waitForNavigation({ timeout: 15000 }).then(() => null),
+        page
+          .waitForSelector('.colors-foreground-accent-negative', { visible: true, timeout: 15000 })
+          .then(async (svgEl) => {
+            return page.evaluate((el) => {
+              const container = el?.closest('.flex.items-center');
+              const textEl = container?.querySelector('div[role="paragraph"]');
+              return textEl ? textEl.textContent : 'Invalid MFA code provided.';
+            }, svgEl);
+          }),
+      ]);
+
+      if (mfaError) {
+        throw new BadRequestException(mfaError);
+      }
 
       this.airtableCookies = await browser.cookies();
       return { success: true, message: 'Cookies retrieved' };
-    } catch (err) {
+    } catch (err: any) {
       console.log(err);
+      if (err instanceof BadRequestException) {
+        throw err;
+      }
       throw new BadRequestException('Failed to authenticate scraper');
     } finally {
       await browser.close();
