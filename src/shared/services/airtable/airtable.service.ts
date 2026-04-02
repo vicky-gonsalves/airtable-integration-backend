@@ -32,6 +32,7 @@ import {
   AirtableActivityInfo,
   AirtableCookie,
 } from 'src/shared/interfaces/airtable-models.interface';
+import { IUser } from 'src/shared/interfaces/user.interface';
 
 @Injectable()
 export class AirtableService {
@@ -689,17 +690,13 @@ export class AirtableService {
     return response.data;
   }
 
-  async fetchUsers(accessToken: string): Promise<any> {
-    const url = 'https://api.airtable.com/v0/Users';
+  async fetchUsers(): Promise<{ users: IUser[] }> {
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
-      );
-      return response.data;
+      const users = await this.userModel.find().lean<IUser[]>().exec();
+      return { users };
     } catch (error) {
-      console.warn('Airtable /Users endpoint restricted or deprecated.');
-      console.error(error);
-      return { users: [] };
+      console.error('Failed to fetch users from local database', error);
+      throw new BadRequestException('Failed to fetch users');
     }
   }
 

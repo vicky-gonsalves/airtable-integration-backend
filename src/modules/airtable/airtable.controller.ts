@@ -87,7 +87,7 @@ export class AirtableController {
   }
 
   @Get('users')
-  async getUsers(@Query('accessToken') accessToken: string) {
-    return this.airtableService.fetchUsers(accessToken);
+  async getUsers() {
+    return this.airtableService.fetchUsers();
   }
 }
