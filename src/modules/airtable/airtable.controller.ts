@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Query, Body, Res, Req, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AirtableService } from 'src/shared/services/airtable/airtable.service';
+import { AirtableScraperService } from 'src/shared/services/airtable-scraper/airtable-scraper.service';
 import { AirtableAuthGuard } from 'src/shared/guards/airtable-auth/airtable-auth.guard';
 import {
   AuthCallbackQueryDto,
@@ -15,7 +16,10 @@ import {
 
 @Controller('airtable')
 export class AirtableController {
-  constructor(private readonly airtableService: AirtableService) {}
+  constructor(
+    private readonly airtableService: AirtableService,
+    private readonly airtableScraperService: AirtableScraperService,
+  ) {}
 
   @Get('auth/url')
   getAuthUrl() {
@@ -43,7 +47,7 @@ export class AirtableController {
 
   @Post('auth/logout')
   logout(@Res() res: Response) {
-    this.airtableService.clearCookies();
+    this.airtableScraperService.clearCookies();
     res.clearCookie('airtable_access_token', {
       httpOnly: true,
       sameSite: 'lax',
@@ -74,12 +78,16 @@ export class AirtableController {
 
   @Post('scrape/auth')
   async authenticateScraper(@Body() body: ScraperAuthDto) {
-    return this.airtableService.authenticateScraper(body.email, body.password, body.mfaCode);
+    return this.airtableScraperService.authenticateScraper(body.email, body.password, body.mfaCode);
   }
 
   @Post('scrape/run')
   async runScraper(@Body() body: RunScraperDto) {
-    return this.airtableService.scrapeRevisionHistory(body.baseId, body.tableId, body.cursor);
+    return this.airtableScraperService.scrapeRevisionHistory(
+      body.baseId,
+      body.tableId,
+      body.cursor,
+    );
   }
 
   @Get('tickets')
