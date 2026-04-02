@@ -14,6 +14,7 @@ import {
   GetUsersQueryDto,
 } from './dtos/airtable.dto';
 import { AirtableScraperService } from 'src/shared/services/airtable-scraper/airtable-scraper.service';
+import { AirtableUrlMapper } from 'src/shared/mappers/airtable-url.mapper';
 
 @Controller('airtable')
 export class AirtableController {
@@ -41,7 +42,7 @@ export class AirtableController {
         sameSite: 'lax',
       });
       this.logger.debug('Callback successfully handled, redirecting');
-      res.redirect('http://localhost:4200/');
+      res.redirect(AirtableUrlMapper.APP_CLIENT_REDIRECT);
     } catch (error: any) {
       this.logger.error('Error handling auth callback', error.stack);
       res.status(500).send('Authentication failed');

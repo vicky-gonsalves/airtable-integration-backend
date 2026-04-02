@@ -17,6 +17,7 @@ import {
   AirtableActivityInfo,
   AirtableCookie,
 } from 'src/shared/interfaces/airtable-models.interface';
+import { AirtableUrlMapper } from 'src/shared/mappers/airtable-url.mapper';
 
 @Injectable()
 export class AirtableScraperService {
@@ -40,7 +41,7 @@ export class AirtableScraperService {
     const page = await browser.newPage();
 
     try {
-      await page.goto('https://airtable.com/login');
+      await page.goto(AirtableUrlMapper.LOGIN);
       await page.type('input[name="email"]', email);
       await page.click('button[type="submit"]');
 
@@ -163,7 +164,7 @@ export class AirtableScraperService {
       const cookieString = this.airtableCookies.map((c) => `${c.name}=${c.value}`).join('; ');
 
       const response = await firstValueFrom(
-        this.httpService.get('https://airtable.com/', {
+        this.httpService.get(AirtableUrlMapper.WEB_BASE, {
           headers: {
             Cookie: cookieString,
             'User-Agent':
@@ -243,7 +244,7 @@ export class AirtableScraperService {
         };
 
         const encodedParams = encodeURIComponent(JSON.stringify(params));
-        const url = `https://airtable.com/v0.3/row/${ticket.airtableId}/readRowActivitiesAndComments?stringifiedObjectParams=${encodedParams}`;
+        const url = `${AirtableUrlMapper.ROW_ACTIVITIES(ticket.airtableId)}?stringifiedObjectParams=${encodedParams}`;
 
         let requestSuccess = false;
         let attempts = 0;
@@ -266,7 +267,7 @@ export class AirtableScraperService {
                   Accept: 'application/json, text/javascript, */*; q=0.01',
                   'User-Agent':
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-                  Referer: `https://airtable.com/${baseId}/${tableId}`,
+                  Referer: AirtableUrlMapper.REFERER(baseId, tableId),
                 },
               }),
             );

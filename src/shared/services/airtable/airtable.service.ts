@@ -23,11 +23,11 @@ import {
   GetAllTicketsQueryDto,
   GetRevisionsQueryDto,
 } from 'src/modules/airtable/dtos/airtable.dto';
+import { AirtableUrlMapper } from 'src/shared/mappers/airtable-url.mapper';
 
 @Injectable()
 export class AirtableService {
   private pkceStore = new Map<string, string>();
-  private readonly baseUrl = 'https://api.airtable.com/v0';
   private readonly logger = new Logger(AirtableService.name);
 
   constructor(
@@ -49,7 +49,7 @@ export class AirtableService {
     this.pkceStore.set(state, codeVerifier);
     this.logger.debug('Generated Airtable authorization URL');
 
-    return `https://airtable.com/oauth2/v1/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=data.records:read schema.bases:read&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+    return `${AirtableUrlMapper.OAUTH_AUTHORIZE}?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=data.records:read schema.bases:read&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
   }
 
   async exchangeCodeForToken(code: string, state: string): Promise<AirtableTokenResponse> {
@@ -69,7 +69,7 @@ export class AirtableService {
     try {
       const response = await firstValueFrom(
         this.httpService.post<AirtableTokenResponse>(
-          'https://airtable.com/oauth2/v1/token',
+          AirtableUrlMapper.OAUTH_TOKEN,
           data.toString(),
           {
             headers: {
@@ -91,7 +91,7 @@ export class AirtableService {
   async validateToken(accessToken: string): Promise<boolean> {
     try {
       await firstValueFrom(
-        this.httpService.get('https://api.airtable.com/v0/meta/whoami', {
+        this.httpService.get(AirtableUrlMapper.WHOAMI, {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
@@ -153,7 +153,8 @@ export class AirtableService {
 
     try {
       while (keepFetching) {
-        const url = `${this.baseUrl}/${baseId}/${tableId}${offset ? `?offset=${offset}` : ''}`;
+        const baseUrl = AirtableUrlMapper.RECORDS(baseId, tableId);
+        const url = `${baseUrl}${offset ? `?offset=${offset}` : ''}`;
 
         const response = await firstValueFrom(
           this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
@@ -324,9 +325,8 @@ export class AirtableService {
 
   async fetchBases(accessToken: string): Promise<AirtableFetchBasesResponse> {
     try {
-      const url = 'https://api.airtable.com/v0/meta/bases';
       const response = await firstValueFrom(
-        this.httpService.get<AirtableFetchBasesResponse>(url, {
+        this.httpService.get<AirtableFetchBasesResponse>(AirtableUrlMapper.BASES, {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
@@ -340,9 +340,8 @@ export class AirtableService {
 
   async fetchTables(baseId: string, accessToken: string): Promise<AirtableFetchTablesResponse> {
     try {
-      const url = `https://api.airtable.com/v0/meta/bases/${baseId}/tables`;
       const response = await firstValueFrom(
-        this.httpService.get<AirtableFetchTablesResponse>(url, {
+        this.httpService.get<AirtableFetchTablesResponse>(AirtableUrlMapper.TABLES(baseId), {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
