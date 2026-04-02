@@ -6,6 +6,7 @@ import { PaginatedUsersResponse } from 'src/shared/interfaces/airtable-responses
 import { ExtractedUser } from 'src/shared/interfaces/airtable-models.interface';
 import { IUser } from 'src/shared/interfaces/user.interface';
 import { GetUsersQueryDto } from 'src/modules/airtable/dtos/airtable.dto';
+import { Messages } from 'src/shared/constants/airtable.messages';
 
 @Injectable()
 export class UserService {
@@ -24,9 +25,9 @@ export class UserService {
         );
         upsertCount++;
       }
-      this.logger.debug(`Successfully upserted ${upsertCount} users`);
+      this.logger.debug(Messages.LOGS.USERS_UPSERT_SUCCESS(upsertCount));
     } catch (error: any) {
-      this.logger.error('Failed to upsert users', error.stack);
+      this.logger.error(Messages.LOGS.USERS_UPSERT_FAIL, error.stack);
       throw error;
     }
   }
@@ -68,11 +69,11 @@ export class UserService {
         this.userModel.countDocuments(filterQuery).exec(),
       ]);
 
-      this.logger.debug(`Successfully fetched ${data.length} users`);
+      this.logger.debug(Messages.LOGS.USERS_FETCH_SUCCESS(data.length));
       return { data, total, page: pageNum, limit: limitNum };
     } catch (error: any) {
-      this.logger.error('Failed to fetch users', error.stack);
-      throw new BadRequestException('Failed to fetch users');
+      this.logger.error(Messages.LOGS.USERS_FETCH_FAIL, error.stack);
+      throw new BadRequestException(Messages.ERRORS.USERS_FETCH_FAIL);
     }
   }
 }

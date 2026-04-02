@@ -24,6 +24,7 @@ import {
   GetRevisionsQueryDto,
 } from 'src/modules/airtable/dtos/airtable.dto';
 import { AirtableUrlMapper } from 'src/shared/mappers/airtable-url.mapper';
+import { Messages } from 'src/shared/constants/airtable.messages';
 
 @Injectable()
 export class AirtableService {
@@ -47,7 +48,7 @@ export class AirtableService {
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
 
     this.pkceStore.set(state, codeVerifier);
-    this.logger.debug('Generated Airtable authorization URL');
+    this.logger.debug(Messages.LOGS.AUTH_URL_GENERATED);
 
     return `${AirtableUrlMapper.OAUTH_AUTHORIZE}?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=data.records:read schema.bases:read&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
   }
@@ -80,10 +81,10 @@ export class AirtableService {
         ),
       );
       this.pkceStore.delete(state);
-      this.logger.debug('Successfully exchanged code for Airtable token');
+      this.logger.debug(Messages.LOGS.TOKEN_EXCHANGE_SUCCESS);
       return response.data;
     } catch (error: any) {
-      this.logger.error('Failed to exchange code for token', error.stack);
+      this.logger.error(Messages.LOGS.TOKEN_EXCHANGE_FAIL, error.stack);
       throw error;
     }
   }
@@ -95,10 +96,10 @@ export class AirtableService {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
-      this.logger.debug('Airtable token validated successfully');
+      this.logger.debug(Messages.LOGS.TOKEN_VALIDATION_SUCCESS);
       return true;
     } catch (error: any) {
-      this.logger.error('Token validation failed', error.stack);
+      this.logger.error(Messages.LOGS.TOKEN_VALIDATION_FAIL, error.stack);
       return false;
     }
   }
@@ -143,7 +144,7 @@ export class AirtableService {
     let keepFetching = true;
     let ticketsProcessed = 0;
 
-    this.logger.debug(`Starting ticket sync for baseId: ${baseId}, tableId: ${tableId}`);
+    this.logger.debug(Messages.LOGS.SYNC_TICKETS_START(baseId, tableId));
 
     await this.syncMetaModel.findOneAndUpdate(
       { baseId, tableId },
@@ -171,7 +172,7 @@ export class AirtableService {
           ticketsProcessed++;
 
           if (ticketsProcessed % 100 === 0) {
-            this.logger.debug(`Sync progress: ${ticketsProcessed} tickets processed...`);
+            this.logger.debug(Messages.LOGS.SYNC_TICKETS_PROGRESS(ticketsProcessed));
           }
         }
 
@@ -188,13 +189,10 @@ export class AirtableService {
         },
       );
 
-      this.logger.debug(`Ticket sync completed successfully. Total processed: ${ticketsProcessed}`);
+      this.logger.debug(Messages.LOGS.SYNC_TICKETS_SUCCESS(ticketsProcessed));
       return { success: true, processed: ticketsProcessed };
     } catch (error: any) {
-      this.logger.error(
-        `Ticket sync failed for baseId: ${baseId}, tableId: ${tableId}`,
-        error.stack,
-      );
+      this.logger.error(Messages.LOGS.SYNC_TICKETS_FAIL(baseId, tableId), error.stack);
       await this.syncMetaModel.findOneAndUpdate(
         { baseId, tableId },
         { ticketSyncStatus: 'FAILED' },
@@ -247,7 +245,7 @@ export class AirtableService {
           rootConditions.push(parsedMongoQuery);
         }
       } catch (e: any) {
-        this.logger.error('Failed to parse Airtable Formula', e.stack);
+        this.logger.error(Messages.LOGS.FORMULA_PARSE_FAIL, e.stack);
       }
     }
 
@@ -288,10 +286,10 @@ export class AirtableService {
         return { ...rest, ...(fields || {}) };
       });
 
-      this.logger.debug(`Successfully fetched ${data.length} tickets`);
+      this.logger.debug(Messages.LOGS.TICKETS_FETCH_SUCCESS(data.length));
       return { data, total, page: pageNum, limit: limitNum, syncMeta };
     } catch (error: any) {
-      this.logger.error('Failed to fetch tickets', error.stack);
+      this.logger.error(Messages.LOGS.TICKETS_FETCH_FAIL, error.stack);
       throw error;
     }
   }
@@ -315,10 +313,10 @@ export class AirtableService {
         this.revisionModel.countDocuments(filterQuery).exec(),
       ]);
 
-      this.logger.debug(`Successfully fetched ${data.length} revisions`);
+      this.logger.debug(Messages.LOGS.REVISIONS_FETCH_SUCCESS(data.length));
       return { data, total, page: pageNum, limit: limitNum };
     } catch (error: any) {
-      this.logger.error('Failed to fetch revisions', error.stack);
+      this.logger.error(Messages.LOGS.REVISIONS_FETCH_FAIL, error.stack);
       throw error;
     }
   }
@@ -330,10 +328,10 @@ export class AirtableService {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
-      this.logger.debug('Successfully fetched Airtable bases');
+      this.logger.debug(Messages.LOGS.BASES_FETCH_SUCCESS);
       return response.data;
     } catch (error: any) {
-      this.logger.error('Failed to fetch Airtable bases', error.stack);
+      this.logger.error(Messages.LOGS.BASES_FETCH_FAIL, error.stack);
       throw error;
     }
   }
@@ -345,10 +343,10 @@ export class AirtableService {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
-      this.logger.debug(`Successfully fetched tables for baseId: ${baseId}`);
+      this.logger.debug(Messages.LOGS.TABLES_FETCH_SUCCESS(baseId));
       return response.data;
     } catch (error: any) {
-      this.logger.error(`Failed to fetch tables for baseId: ${baseId}`, error.stack);
+      this.logger.error(Messages.LOGS.TABLES_FETCH_FAIL(baseId), error.stack);
       throw error;
     }
   }

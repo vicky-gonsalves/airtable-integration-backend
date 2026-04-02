@@ -18,6 +18,7 @@ import {
   AirtableCookie,
 } from 'src/shared/interfaces/airtable-models.interface';
 import { AirtableUrlMapper } from 'src/shared/mappers/airtable-url.mapper';
+import { Messages } from 'src/shared/constants/airtable.messages';
 
 @Injectable()
 export class AirtableScraperService {
@@ -36,7 +37,7 @@ export class AirtableScraperService {
     password: string,
     mfaCode: string,
   ): Promise<ScraperAuthResponse> {
-    this.logger.debug(`Authenticating scraper for email: ${email}`);
+    this.logger.debug(Messages.LOGS.SCRAPER_AUTH_START(email));
     const browser = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
 
@@ -65,14 +66,14 @@ export class AirtableScraperService {
                   .querySelector('.colors-foreground-accent-negative')
                   ?.closest('.flex.items-center')
                   ?.querySelector('div[role="paragraph"]');
-              return el ? el.textContent : 'Invalid email provided.';
+              return el ? el.textContent : Messages.ERRORS.INVALID_EMAIL;
             }),
           )
           .catch(() => null),
       ]);
 
       if (emailError) {
-        this.logger.error(`Scraper auth email error: ${emailError}`);
+        this.logger.error(Messages.LOGS.SCRAPER_AUTH_EMAIL_ERR(emailError));
         throw new BadRequestException(emailError);
       }
 
@@ -99,14 +100,14 @@ export class AirtableScraperService {
                   .querySelector('.colors-foreground-accent-negative')
                   ?.closest('.flex.items-center')
                   ?.querySelector('div[role="paragraph"]');
-              return el ? el.textContent : 'Invalid password provided.';
+              return el ? el.textContent : Messages.ERRORS.INVALID_PWD;
             }),
           )
           .catch(() => null),
       ]);
 
       if (passwordError) {
-        this.logger.error(`Scraper auth password error: ${passwordError}`);
+        this.logger.error(Messages.LOGS.SCRAPER_AUTH_PWD_ERR(passwordError));
         throw new BadRequestException(passwordError);
       }
 
@@ -134,24 +135,24 @@ export class AirtableScraperService {
                 ?.querySelector('div[role="paragraph"]');
               const el3 = document.querySelector('div[role="alert"] .small.strong.quiet');
               const el = el1 || el2 || el3;
-              return el ? el.textContent : 'Invalid MFA code provided.';
+              return el ? el.textContent : Messages.ERRORS.INVALID_MFA;
             }),
           )
           .catch(() => null),
       ]);
 
       if (mfaError) {
-        this.logger.error(`Scraper auth MFA error: ${mfaError}`);
+        this.logger.error(Messages.LOGS.SCRAPER_AUTH_MFA_ERR(mfaError));
         throw new BadRequestException(mfaError);
       }
 
       this.airtableCookies = (await browser.cookies()) as AirtableCookie[];
-      this.logger.debug('Scraper authenticated successfully. Cookies retrieved.');
-      return { success: true, message: 'Cookies retrieved' };
+      this.logger.debug(Messages.LOGS.SCRAPER_AUTH_SUCCESS);
+      return { success: true, message: Messages.SUCCESS.COOKIES_RETRIEVED };
     } catch (err: any) {
-      this.logger.error('Failed to authenticate scraper', err.stack);
+      this.logger.error(Messages.LOGS.SCRAPER_AUTH_FAIL, err.stack);
       if (err instanceof BadRequestException) throw err;
-      throw new BadRequestException('Failed to authenticate scraper');
+      throw new BadRequestException(Messages.ERRORS.SCRAPER_AUTH_FAIL);
     } finally {
       await browser.close();
     }
@@ -176,7 +177,7 @@ export class AirtableScraperService {
       const finalUrl = response.request?.res?.responseUrl || '';
       return !finalUrl.includes('airtable.com/login');
     } catch (error: any) {
-      this.logger.error('Cookie validity check failed', error.stack);
+      this.logger.error(Messages.LOGS.SCRAPER_COOKIE_FAIL, error.stack);
       return false;
     }
   }
@@ -186,12 +187,12 @@ export class AirtableScraperService {
     tableId: string,
     providedCursor?: string,
   ): Promise<RevisionSyncResponse> {
-    this.logger.debug(`Starting revision sync for baseId: ${baseId}, tableId: ${tableId}`);
+    this.logger.debug(Messages.LOGS.SCRAPER_SYNC_START(baseId, tableId));
 
     const isValid = await this.checkCookieValidity();
     if (!isValid) {
-      this.logger.error('Scraper authentication required or cookies invalid.');
-      throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
+      this.logger.error(Messages.LOGS.SCRAPER_AUTH_REQ);
+      throw new BadRequestException(Messages.ERRORS.SCRAPER_AUTH_REQ);
     }
 
     await this.syncMetaModel.findOneAndUpdate(
@@ -223,7 +224,7 @@ export class AirtableScraperService {
           revisionsProcessedLastSync: 0,
         },
       );
-      this.logger.debug('No tickets found for revision sync. Sync completed.');
+      this.logger.debug(Messages.LOGS.SCRAPER_NO_TICKETS);
       return { success: true, hasMore: false, cursor: null };
     }
 
@@ -359,9 +360,7 @@ export class AirtableScraperService {
                 });
                 totalRevisionsParsed++;
                 if (totalRevisionsParsed % 100 === 0) {
-                  this.logger.debug(
-                    `Revision sync progress: ${totalRevisionsParsed} revisions parsed and stored...`,
-                  );
+                  this.logger.debug(Messages.LOGS.SCRAPER_SYNC_PROGRESS(totalRevisionsParsed));
                 }
               }
 
@@ -382,9 +381,7 @@ export class AirtableScraperService {
           } catch (err: any) {
             const status = err.response?.status;
             if (status === 429) {
-              this.logger.warn(
-                `Rate limit hit while scraping revisions. Retrying attempt ${attempts} for ticket ${ticket.airtableId}`,
-              );
+              this.logger.warn(Messages.LOGS.SCRAPER_RATE_LIMIT(attempts, ticket.airtableId));
               if (attempts >= maxAttempts) {
                 hasMoreHistory = false;
                 break;
@@ -394,15 +391,10 @@ export class AirtableScraperService {
               continue;
             }
             if (status === 401 || status === 403) {
-              this.logger.error(
-                `Unauthorized error during scraping revisions for ticket ${ticket.airtableId}`,
-              );
-              throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
+              this.logger.error(Messages.LOGS.SCRAPER_UNAUTHORIZED(ticket.airtableId));
+              throw new BadRequestException(Messages.ERRORS.SCRAPER_AUTH_REQ);
             }
-            this.logger.error(
-              `Failed to scrape revisions for ticket ${ticket.airtableId}`,
-              err.stack,
-            );
+            this.logger.error(Messages.LOGS.SCRAPER_TICKET_FAIL(ticket.airtableId), err.stack);
             hasMoreHistory = false;
             break;
           }
@@ -411,7 +403,7 @@ export class AirtableScraperService {
       ticketsProcessedCount++;
       if (ticketsProcessedCount % 50 === 0) {
         this.logger.debug(
-          `Processed revisions for ${ticketsProcessedCount}/${tickets.length} tickets in batch...`,
+          Messages.LOGS.SCRAPER_BATCH_PROGRESS(ticketsProcessedCount, tickets.length),
         );
       }
     });
@@ -431,14 +423,12 @@ export class AirtableScraperService {
       },
     );
 
-    this.logger.debug(
-      `Revision history scrape completed for batch. Total parsed: ${totalRevisionsParsed}. HasMore: ${hasMore}`,
-    );
+    this.logger.debug(Messages.LOGS.SCRAPER_SYNC_SUCCESS(totalRevisionsParsed, hasMore));
     return { success: true, hasMore, cursor: nextCursor };
   }
 
   clearCookies(): void {
     this.airtableCookies = [];
-    this.logger.debug('Scraper cookies cleared successfully');
+    this.logger.debug(Messages.LOGS.SCRAPER_COOKIES_CLEARED);
   }
 }
