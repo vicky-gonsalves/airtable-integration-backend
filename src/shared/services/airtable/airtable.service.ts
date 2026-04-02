@@ -12,12 +12,32 @@ import { Revision } from 'src/shared/schemas/revision.schema';
 import { User } from 'src/shared/schemas/user.schema';
 import { SyncMeta } from 'src/shared/schemas/sync-meta.schema';
 import { AirtableFormulaParser } from 'src/shared/utils/airtable-formula.parser';
+import {
+  GetAllTicketsQuery,
+  GetRevisionsQuery,
+} from 'src/shared/interfaces/airtable-queries.interface';
+import {
+  PaginatedTicketsResponse,
+  PaginatedRevisionsResponse,
+  TicketSyncResponse,
+  RevisionSyncResponse,
+  ScraperAuthResponse,
+  AirtableTokenResponse,
+  AirtableFetchBasesResponse,
+  AirtableFetchTablesResponse,
+} from 'src/shared/interfaces/airtable-responses.interface';
+import {
+  ExtractedUser,
+  ParsedActivity,
+  AirtableActivityInfo,
+  AirtableCookie,
+} from 'src/shared/interfaces/airtable-models.interface';
 
 @Injectable()
 export class AirtableService {
   private pkceStore = new Map<string, string>();
   private readonly baseUrl = 'https://api.airtable.com/v0';
-  private airtableCookies: any[] = [];
+  private airtableCookies: AirtableCookie[] = [];
 
   constructor(
     private readonly httpService: HttpService,
@@ -40,7 +60,7 @@ export class AirtableService {
     return `https://airtable.com/oauth2/v1/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=data.records:read schema.bases:read&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
   }
 
-  async exchangeCodeForToken(code: string, state: string) {
+  async exchangeCodeForToken(code: string, state: string): Promise<AirtableTokenResponse> {
     const codeVerifier = this.pkceStore.get(state);
     const clientId = this.configService.get<string>('AIRTABLE_CLIENT_ID');
     const clientSecret = this.configService.get<string>('AIRTABLE_CLIENT_SECRET');
@@ -55,12 +75,16 @@ export class AirtableService {
     });
 
     const response = await firstValueFrom(
-      this.httpService.post('https://airtable.com/oauth2/v1/token', data.toString(), {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: `Basic ${credentials}`,
+      this.httpService.post<AirtableTokenResponse>(
+        'https://airtable.com/oauth2/v1/token',
+        data.toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Authorization: `Basic ${credentials}`,
+          },
         },
-      }),
+      ),
     );
     this.pkceStore.delete(state);
     return response.data;
@@ -80,15 +104,20 @@ export class AirtableService {
     }
   }
 
-  private async extractAndUpsertUsers(fields: Record<string, any>) {
-    const usersToUpsert = new Map<string, any>();
+  private async extractAndUpsertUsers(fields: Record<string, any>): Promise<void> {
+    const usersToUpsert = new Map<string, ExtractedUser>();
 
     const traverse = (obj: any) => {
       if (!obj) return;
       if (Array.isArray(obj)) {
         obj.forEach(traverse);
       } else if (typeof obj === 'object') {
-        if (obj.id && obj.id.startsWith('usr') && (obj.email || obj.name)) {
+        if (
+          obj.id &&
+          typeof obj.id === 'string' &&
+          obj.id.startsWith('usr') &&
+          (obj.email || obj.name)
+        ) {
           usersToUpsert.set(obj.id, {
             airtableId: obj.id,
             email: obj.email || null,
@@ -110,7 +139,11 @@ export class AirtableService {
     }
   }
 
-  async fetchAndStoreTickets(baseId: string, tableId: string, accessToken: string) {
+  async fetchAndStoreTickets(
+    baseId: string,
+    tableId: string,
+    accessToken: string,
+  ): Promise<TicketSyncResponse> {
     let offset: string | undefined = undefined;
     let keepFetching = true;
     let ticketsProcessed = 0;
@@ -163,7 +196,11 @@ export class AirtableService {
     }
   }
 
-  async authenticateScraper(email: string, password: string, mfaCode: string) {
+  async authenticateScraper(
+    email: string,
+    password: string,
+    mfaCode: string,
+  ): Promise<ScraperAuthResponse> {
     const browser = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
 
@@ -263,7 +300,7 @@ export class AirtableService {
 
       if (mfaError) throw new BadRequestException(mfaError);
 
-      this.airtableCookies = await browser.cookies();
+      this.airtableCookies = (await browser.cookies()) as AirtableCookie[];
       return { success: true, message: 'Cookies retrieved' };
     } catch (err: any) {
       if (err instanceof BadRequestException) throw err;
@@ -297,7 +334,11 @@ export class AirtableService {
     }
   }
 
-  async scrapeRevisionHistory(baseId: string, tableId: string, providedCursor?: string) {
+  async scrapeRevisionHistory(
+    baseId: string,
+    tableId: string,
+    providedCursor?: string,
+  ): Promise<RevisionSyncResponse> {
     const isValid = await this.checkCookieValidity();
     if (!isValid) {
       throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
@@ -315,7 +356,7 @@ export class AirtableService {
       cursor = meta?.revisionCursor;
     }
 
-    const query: any = { baseId, tableId };
+    const query: Record<string, any> = { baseId, tableId };
     if (cursor) {
       query._id = { $gt: cursor };
     }
@@ -387,9 +428,11 @@ export class AirtableService {
               response.data.data.rowActivityInfoById
             ) {
               const activitiesObj = response.data.data.rowActivityInfoById;
-              const parsedActivities: any[] = [];
+              const parsedActivities: ParsedActivity[] = [];
 
-              for (const [uuid, activityInfo] of Object.entries<any>(activitiesObj)) {
+              for (const [uuid, activityInfo] of Object.entries<AirtableActivityInfo>(
+                activitiesObj,
+              )) {
                 if (!activityInfo.diffRowHtml) continue;
                 if (activityInfo.groupType === 'columnConfig') continue;
 
@@ -518,7 +561,7 @@ export class AirtableService {
     return { success: true, hasMore, cursor: nextCursor };
   }
 
-  async getAllTickets(query: any = {}) {
+  async getAllTickets(query: GetAllTicketsQuery = {}): Promise<PaginatedTicketsResponse> {
     const {
       baseId,
       tableId,
@@ -534,7 +577,7 @@ export class AirtableService {
     const limitNum = parseInt(limit, 10);
     const skip = pageNum * limitNum;
 
-    const rootConditions: any[] = [];
+    const rootConditions: Record<string, any>[] = [];
 
     if (baseId) rootConditions.push({ baseId });
     if (tableId) rootConditions.push({ tableId });
@@ -566,9 +609,10 @@ export class AirtableService {
       }
     }
 
-    const filterQuery = rootConditions.length > 0 ? { $and: rootConditions } : {};
+    const filterQuery: Record<string, any> =
+      rootConditions.length > 0 ? { $and: rootConditions } : {};
 
-    const sortObj: any = {};
+    const sortObj: Record<string, 1 | -1> = {};
     if (sortBy) {
       const sortKey = ['airtableId', 'baseId', 'tableId', 'createdAt', 'updatedAt'].includes(sortBy)
         ? sortBy
@@ -604,13 +648,13 @@ export class AirtableService {
     return { data, total, page: pageNum, limit: limitNum, syncMeta };
   }
 
-  async getRevisions(query: any = {}) {
+  async getRevisions(query: GetRevisionsQuery = {}): Promise<PaginatedRevisionsResponse> {
     const { issueId, page = '0', limit = '20' } = query;
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
     const skip = pageNum * limitNum;
 
-    const filterQuery = issueId ? { issueId } : {};
+    const filterQuery: Record<string, any> = issueId ? { issueId } : {};
 
     const [data, total] = await Promise.all([
       this.revisionModel
@@ -625,23 +669,27 @@ export class AirtableService {
     return { data, total, page: pageNum, limit: limitNum };
   }
 
-  async fetchBases(accessToken: string) {
+  async fetchBases(accessToken: string): Promise<AirtableFetchBasesResponse> {
     const url = 'https://api.airtable.com/v0/meta/bases';
     const response = await firstValueFrom(
-      this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
+      this.httpService.get<AirtableFetchBasesResponse>(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
     );
     return response.data;
   }
 
-  async fetchTables(baseId: string, accessToken: string) {
+  async fetchTables(baseId: string, accessToken: string): Promise<AirtableFetchTablesResponse> {
     const url = `https://api.airtable.com/v0/meta/bases/${baseId}/tables`;
     const response = await firstValueFrom(
-      this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
+      this.httpService.get<AirtableFetchTablesResponse>(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
     );
     return response.data;
   }
 
-  async fetchUsers(accessToken: string) {
+  async fetchUsers(accessToken: string): Promise<any> {
     const url = 'https://api.airtable.com/v0/Users';
     try {
       const response = await firstValueFrom(
@@ -655,7 +703,7 @@ export class AirtableService {
     }
   }
 
-  clearCookies() {
+  clearCookies(): void {
     this.airtableCookies = [];
   }
 }
