@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -7,10 +7,9 @@ import * as crypto from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import { Ticket } from 'src/shared/schemas/ticket.schema';
 import { Revision } from 'src/shared/schemas/revision.schema';
-import { User } from 'src/shared/schemas/user.schema';
 import { SyncMeta } from 'src/shared/schemas/sync-meta.schema';
 import { AirtableFormulaParser } from 'src/shared/utils/airtable-formula.parser';
-
+import { UserService } from 'src/shared/services/user/user.service';
 import {
   PaginatedTicketsResponse,
   PaginatedRevisionsResponse,
@@ -18,14 +17,11 @@ import {
   AirtableTokenResponse,
   AirtableFetchBasesResponse,
   AirtableFetchTablesResponse,
-  PaginatedUsersResponse,
 } from 'src/shared/interfaces/airtable-responses.interface';
 import { ExtractedUser } from 'src/shared/interfaces/airtable-models.interface';
-import { IUser } from 'src/shared/interfaces/user.interface';
 import {
   GetAllTicketsQueryDto,
   GetRevisionsQueryDto,
-  GetUsersQueryDto,
 } from 'src/modules/airtable/dtos/airtable.dto';
 
 @Injectable()
@@ -36,9 +32,9 @@ export class AirtableService {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly userService: UserService,
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Revision.name) private revisionModel: Model<Revision>,
-    @InjectModel(User.name) private userModel: Model<User>,
     @InjectModel(SyncMeta.name) private syncMetaModel: Model<SyncMeta>,
   ) {}
 
@@ -124,13 +120,7 @@ export class AirtableService {
 
     traverse(fields);
 
-    for (const user of usersToUpsert.values()) {
-      await this.userModel.findOneAndUpdate(
-        { airtableId: user.airtableId },
-        { $set: user },
-        { upsert: true },
-      );
-    }
+    await this.userService.upsertUsers(usersToUpsert.values());
   }
 
   async fetchAndStoreTickets(
@@ -316,49 +306,5 @@ export class AirtableService {
       }),
     );
     return response.data;
-  }
-
-  async fetchUsers(query: GetUsersQueryDto = {}): Promise<PaginatedUsersResponse> {
-    const { page = '0', limit = '20', search = '', sortBy = '', sortOrder = 'asc' } = query;
-
-    const pageNum = parseInt(page, 10);
-    const limitNum = parseInt(limit, 10);
-    const skip = pageNum * limitNum;
-
-    const filterQuery: Record<string, any> = {};
-
-    if (search) {
-      filterQuery.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { airtableId: { $regex: search, $options: 'i' } },
-      ];
-    }
-
-    const sortObj: Record<string, 1 | -1> = {};
-    if (sortBy) {
-      sortObj[sortBy] = sortOrder === 'desc' ? -1 : 1;
-    } else {
-      sortObj['createdAt'] = -1;
-    }
-
-    try {
-      const [data, total] = await Promise.all([
-        this.userModel
-          .find(filterQuery)
-          .select('-__v')
-          .sort(sortObj)
-          .skip(skip)
-          .limit(limitNum)
-          .lean<IUser[]>()
-          .exec(),
-        this.userModel.countDocuments(filterQuery).exec(),
-      ]);
-
-      return { data, total, page: pageNum, limit: limitNum };
-    } catch (error) {
-      console.error('Failed to fetch users from local database', error);
-      throw new BadRequestException('Failed to fetch users');
-    }
   }
 }

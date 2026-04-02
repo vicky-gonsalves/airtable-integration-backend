@@ -9,8 +9,9 @@ import { Revision, RevisionSchema } from 'src/shared/schemas/revision.schema';
 import { User, UserSchema } from 'src/shared/schemas/user.schema';
 import { SyncMeta, SyncMetaSchema } from 'src/shared/schemas/sync-meta.schema';
 import { AirtableScraperService } from './services/airtable-scraper/airtable-scraper.service';
+import { UserService } from './services/user/user.service';
 
-const sharedProviders = [AirtableService, AirtableScraperService];
+const sharedProviders = [AirtableService, AirtableScraperService, UserService];
 
 @Global()
 @Module({

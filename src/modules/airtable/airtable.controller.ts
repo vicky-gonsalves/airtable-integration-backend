@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Query, Body, Res, Req, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AirtableService } from 'src/shared/services/airtable/airtable.service';
-import { AirtableScraperService } from 'src/shared/services/airtable-scraper/airtable-scraper.service';
+import { UserService } from 'src/shared/services/user/user.service';
 import { AirtableAuthGuard } from 'src/shared/guards/airtable-auth/airtable-auth.guard';
 import {
   AuthCallbackQueryDto,
@@ -13,12 +13,14 @@ import {
   GetRevisionsQueryDto,
   GetUsersQueryDto,
 } from './dtos/airtable.dto';
+import { AirtableScraperService } from 'src/shared/services/airtable-scraper/airtable-scraper.service';
 
 @Controller('airtable')
 export class AirtableController {
   constructor(
     private readonly airtableService: AirtableService,
     private readonly airtableScraperService: AirtableScraperService,
+    private readonly userService: UserService,
   ) {}
 
   @Get('auth/url')
@@ -102,6 +104,6 @@ export class AirtableController {
 
   @Get('users')
   async getUsers(@Query() query: GetUsersQueryDto) {
-    return this.airtableService.fetchUsers(query);
+    return this.userService.fetchUsers(query);
   }
 }
