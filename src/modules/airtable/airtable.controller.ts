@@ -2,7 +2,16 @@ import { Controller, Get, Post, Query, Body, Res, Req, UseGuards } from '@nestjs
 import type { Request, Response } from 'express';
 import { AirtableService } from 'src/shared/services/airtable/airtable.service';
 import { AirtableAuthGuard } from 'src/shared/guards/airtable-auth/airtable-auth.guard';
-import type { GetUsersQuery } from 'src/shared/interfaces/airtable-queries.interface';
+import {
+  AuthCallbackQueryDto,
+  GetTablesQueryDto,
+  SyncTicketsDto,
+  ScraperAuthDto,
+  RunScraperDto,
+  GetAllTicketsQueryDto,
+  GetRevisionsQueryDto,
+  GetUsersQueryDto,
+} from './dtos/airtable.dto';
 
 @Controller('airtable')
 export class AirtableController {
@@ -14,12 +23,8 @@ export class AirtableController {
   }
 
   @Get('auth/callback')
-  async handleCallback(
-    @Query('code') code: string,
-    @Query('state') state: string,
-    @Res() res: Response,
-  ) {
-    const tokenData = await this.airtableService.exchangeCodeForToken(code, state);
+  async handleCallback(@Query() query: AuthCallbackQueryDto, @Res() res: Response) {
+    const tokenData = await this.airtableService.exchangeCodeForToken(query.code, query.state);
     res.cookie('airtable_access_token', tokenData.access_token, {
       httpOnly: true,
       sameSite: 'lax',
@@ -55,40 +60,40 @@ export class AirtableController {
 
   @Get('tables')
   @UseGuards(AirtableAuthGuard)
-  async getTables(@Req() req: Request, @Query('baseId') baseId: string) {
+  async getTables(@Req() req: Request, @Query() query: GetTablesQueryDto) {
     const token = req.cookies['airtable_access_token'];
-    return this.airtableService.fetchTables(baseId, token);
+    return this.airtableService.fetchTables(query.baseId, token);
   }
 
   @Post('sync')
   @UseGuards(AirtableAuthGuard)
-  async syncTickets(@Req() req: Request, @Body() body: { baseId: string; tableId: string }) {
+  async syncTickets(@Req() req: Request, @Body() body: SyncTicketsDto) {
     const token = req.cookies['airtable_access_token'];
     return this.airtableService.fetchAndStoreTickets(body.baseId, body.tableId, token);
   }
 
   @Post('scrape/auth')
-  async authenticateScraper(@Body() body: { email: string; password: string; mfaCode: string }) {
+  async authenticateScraper(@Body() body: ScraperAuthDto) {
     return this.airtableService.authenticateScraper(body.email, body.password, body.mfaCode);
   }
 
   @Post('scrape/run')
-  async runScraper(@Body() body: { baseId: string; tableId: string; cursor?: string }) {
+  async runScraper(@Body() body: RunScraperDto) {
     return this.airtableService.scrapeRevisionHistory(body.baseId, body.tableId, body.cursor);
   }
 
   @Get('tickets')
-  async getTickets(@Query() query: any) {
+  async getTickets(@Query() query: GetAllTicketsQueryDto) {
     return this.airtableService.getAllTickets(query);
   }
 
   @Get('revisions')
-  async getRevisions(@Query() query: any) {
+  async getRevisions(@Query() query: GetRevisionsQueryDto) {
     return this.airtableService.getRevisions(query);
   }
 
   @Get('users')
-  async getUsers(@Query() query: GetUsersQuery) {
+  async getUsers(@Query() query: GetUsersQueryDto) {
     return this.airtableService.fetchUsers(query);
   }
 }
