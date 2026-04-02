@@ -6,6 +6,8 @@ import { AirtableModule } from 'src/modules/airtable/airtable.module';
 import { AirtableService } from './services/airtable/airtable.service';
 import { Ticket, TicketSchema } from 'src/shared/schemas/ticket.schema';
 import { Revision, RevisionSchema } from 'src/shared/schemas/revision.schema';
+import { User, UserSchema } from 'src/shared/schemas/user.schema';
+import { SyncMeta, SyncMetaSchema } from 'src/shared/schemas/sync-meta.schema';
 
 const sharedProviders = [AirtableService];
 
@@ -23,6 +25,8 @@ const sharedProviders = [AirtableService];
     MongooseModule.forFeature([
       { name: Ticket.name, schema: TicketSchema },
       { name: Revision.name, schema: RevisionSchema },
+      { name: User.name, schema: UserSchema },
+      { name: SyncMeta.name, schema: SyncMetaSchema },
     ]),
     AirtableModule,
   ],

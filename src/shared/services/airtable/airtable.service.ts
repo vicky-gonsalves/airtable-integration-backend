@@ -9,6 +9,8 @@ import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 import { Ticket } from 'src/shared/schemas/ticket.schema';
 import { Revision } from 'src/shared/schemas/revision.schema';
+import { User } from 'src/shared/schemas/user.schema';
+import { SyncMeta } from 'src/shared/schemas/sync-meta.schema';
 import { AirtableFormulaParser } from 'src/shared/utils/airtable-formula.parser';
 
 @Injectable()
@@ -22,6 +24,8 @@ export class AirtableService {
     private readonly configService: ConfigService,
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Revision.name) private revisionModel: Model<Revision>,
+    @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(SyncMeta.name) private syncMetaModel: Model<SyncMeta>,
   ) {}
 
   getAuthUrl(): string {
@@ -76,29 +80,87 @@ export class AirtableService {
     }
   }
 
+  private async extractAndUpsertUsers(fields: Record<string, any>) {
+    const usersToUpsert = new Map<string, any>();
+
+    const traverse = (obj: any) => {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        obj.forEach(traverse);
+      } else if (typeof obj === 'object') {
+        if (obj.id && obj.id.startsWith('usr') && (obj.email || obj.name)) {
+          usersToUpsert.set(obj.id, {
+            airtableId: obj.id,
+            email: obj.email || null,
+            name: obj.name || null,
+          });
+        }
+        Object.values(obj).forEach(traverse);
+      }
+    };
+
+    traverse(fields);
+
+    for (const user of usersToUpsert.values()) {
+      await this.userModel.findOneAndUpdate(
+        { airtableId: user.airtableId },
+        { $set: user },
+        { upsert: true },
+      );
+    }
+  }
+
   async fetchAndStoreTickets(baseId: string, tableId: string, accessToken: string) {
     let offset: string | undefined = undefined;
     let keepFetching = true;
+    let ticketsProcessed = 0;
 
-    while (keepFetching) {
-      const url = `${this.baseUrl}/${baseId}/${tableId}${offset ? `?offset=${offset}` : ''}`;
+    await this.syncMetaModel.findOneAndUpdate(
+      { baseId, tableId },
+      { ticketSyncStatus: 'IN_PROGRESS' },
+      { upsert: true },
+    );
 
-      const response = await firstValueFrom(
-        this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
-      );
+    try {
+      while (keepFetching) {
+        const url = `${this.baseUrl}/${baseId}/${tableId}${offset ? `?offset=${offset}` : ''}`;
 
-      for (const record of response.data.records) {
-        await this.ticketModel.findOneAndUpdate(
-          { airtableId: record.id },
-          { airtableId: record.id, baseId, tableId, fields: record.fields },
-          { upsert: true, returnDocument: 'after' },
+        const response = await firstValueFrom(
+          this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
         );
+
+        for (const record of response.data.records) {
+          await this.ticketModel.findOneAndUpdate(
+            { airtableId: record.id },
+            { airtableId: record.id, baseId, tableId, fields: record.fields },
+            { upsert: true },
+          );
+
+          await this.extractAndUpsertUsers(record.fields);
+          ticketsProcessed++;
+        }
+
+        offset = response.data.offset;
+        if (!offset) keepFetching = false;
       }
 
-      offset = response.data.offset;
-      if (!offset) keepFetching = false;
+      await this.syncMetaModel.findOneAndUpdate(
+        { baseId, tableId },
+        {
+          ticketSyncStatus: 'SUCCESS',
+          lastTicketSyncDate: new Date(),
+          ticketsProcessedLastSync: ticketsProcessed,
+        },
+      );
+
+      return { success: true, processed: ticketsProcessed };
+    } catch (error) {
+      await this.syncMetaModel.findOneAndUpdate(
+        { baseId, tableId },
+        { ticketSyncStatus: 'FAILED' },
+      );
+      throw error;
     }
-    return { success: true };
   }
 
   async authenticateScraper(email: string, password: string, mfaCode: string) {
@@ -146,7 +208,6 @@ export class AirtableService {
       );
 
       const finalUrl = response.request?.res?.responseUrl || '';
-
       return !finalUrl.includes('airtable.com/login');
     } catch (error) {
       console.log(error);
@@ -154,15 +215,27 @@ export class AirtableService {
     }
   }
 
-  async scrapeRevisionHistory(baseId: string, tableId: string, cursor?: string) {
+  async scrapeRevisionHistory(baseId: string, tableId: string, providedCursor?: string) {
     console.log(
-      `[Scraper] Starting scrape for Base: ${baseId}, Table: ${tableId}, Cursor: ${cursor || 'None'}`,
+      `[Scraper] Starting scrape for Base: ${baseId}, Table: ${tableId}, Cursor: ${providedCursor || 'None'}`,
     );
 
     const isValid = await this.checkCookieValidity();
     if (!isValid) {
       console.error('[Scraper Error] Cookies expired or invalid.');
       throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
+    }
+
+    await this.syncMetaModel.findOneAndUpdate(
+      { baseId, tableId },
+      { revisionSyncStatus: 'IN_PROGRESS' },
+      { upsert: true },
+    );
+
+    let cursor = providedCursor;
+    if (!cursor) {
+      const meta = await this.syncMetaModel.findOne({ baseId, tableId });
+      cursor = meta?.revisionCursor;
     }
 
     const query: any = { baseId, tableId };
@@ -177,10 +250,19 @@ export class AirtableService {
 
     if (tickets.length === 0) {
       console.log('[Scraper] No more tickets to process.');
+      await this.syncMetaModel.findOneAndUpdate(
+        { baseId, tableId },
+        {
+          revisionSyncStatus: 'SUCCESS',
+          lastRevisionSyncDate: new Date(),
+          revisionsProcessedLastSync: 0,
+        },
+      );
       return { success: true, hasMore: false, cursor: null };
     }
 
     const cookieString = this.airtableCookies.map((c) => `${c.name}=${c.value}`).join('; ');
+    let totalRevisionsParsed = 0;
 
     const scrapePromises = tickets.map(async (ticket) => {
       let offsetV2 = null;
@@ -208,10 +290,6 @@ export class AirtableService {
           attempts++;
 
           try {
-            console.log(
-              `[Scraper] Fetching activities for ${ticket.airtableId} (Attempt ${attempts}) with offset: ${offsetV2 || 'Initial'}`,
-            );
-
             const response = await firstValueFrom(
               this.httpService.get(url, {
                 headers: {
@@ -237,12 +315,10 @@ export class AirtableService {
               response.data.data.rowActivityInfoById
             ) {
               const activitiesObj = response.data.data.rowActivityInfoById;
-              console.log(JSON.stringify(activitiesObj));
               const parsedActivities: any[] = [];
 
               for (const [uuid, activityInfo] of Object.entries<any>(activitiesObj)) {
                 if (!activityInfo.diffRowHtml) continue;
-
                 if (activityInfo.groupType === 'columnConfig') continue;
 
                 const $ = cheerio.load(activityInfo.diffRowHtml);
@@ -258,8 +334,7 @@ export class AirtableService {
                     const extractCleanText = (node: cheerio.Cheerio<any>) => {
                       const clone = node.clone();
                       clone.find('.circle, svg').remove();
-                      const text = clone.text().replace(/\xa0/g, ' ').replace(/\s+/g, ' ').trim();
-                      return text;
+                      return clone.text().replace(/\xa0/g, ' ').replace(/\s+/g, ' ').trim();
                     };
 
                     if (cell.find('.textDiff').length > 0) {
@@ -315,6 +390,7 @@ export class AirtableService {
                 await this.revisionModel.findOneAndUpdate({ uuid: act.uuid }, act, {
                   upsert: true,
                 });
+                totalRevisionsParsed++;
               }
 
               if (response.data.data.offsetV2) {
@@ -322,7 +398,6 @@ export class AirtableService {
               } else if (response.data.data.pagination && response.data.data.pagination.offsetV2) {
                 offsetV2 = response.data.data.pagination.offsetV2;
               } else {
-                console.log(`[Scraper] Completed history for ticket ${ticket.airtableId}.`);
                 hasMoreHistory = false;
               }
             } else {
@@ -334,36 +409,18 @@ export class AirtableService {
             }
           } catch (err: any) {
             const status = err.response?.status;
-
             if (status === 429) {
-              console.warn(
-                `[Scraper] Rate limit (429) hit for ${ticket.airtableId}. Attempt ${attempts}/${maxAttempts}.`,
-              );
-
               if (attempts >= maxAttempts) {
-                console.error(
-                  `[Scraper] Max retries reached for ${ticket.airtableId}. Aborting this ticket's history.`,
-                );
                 hasMoreHistory = false;
                 break;
               }
-
               const backoffMs = baseDelayMs * Math.pow(2, attempts - 1) + Math.random() * 500;
-              console.log(`[Scraper] Backing off for ${Math.round(backoffMs)}ms...`);
-
               await new Promise((resolve) => setTimeout(resolve, backoffMs));
               continue;
             }
-
             if (status === 401 || status === 403) {
               throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
             }
-
-            console.error(
-              `[Scraper Error] Failed to scrape ticket ${ticket.airtableId}:`,
-              status,
-              err.response?.data,
-            );
             hasMoreHistory = false;
             break;
           }
@@ -376,8 +433,14 @@ export class AirtableService {
     const hasMore = tickets.length === batchSize;
     const nextCursor = hasMore ? tickets[tickets.length - 1]._id.toString() : null;
 
-    console.log(
-      `[Scraper] Batch complete. Has more tickets: ${hasMore}, Next Cursor: ${nextCursor}`,
+    await this.syncMetaModel.findOneAndUpdate(
+      { baseId, tableId },
+      {
+        revisionSyncStatus: hasMore ? 'PARTIAL_SUCCESS' : 'SUCCESS',
+        lastRevisionSyncDate: new Date(),
+        revisionCursor: nextCursor,
+        revisionsProcessedLastSync: totalRevisionsParsed,
+      },
     );
 
     return { success: true, hasMore, cursor: nextCursor };
@@ -401,13 +464,8 @@ export class AirtableService {
 
     const rootConditions: any[] = [];
 
-    if (baseId) {
-      rootConditions.push({ baseId });
-    }
-
-    if (tableId) {
-      rootConditions.push({ tableId });
-    }
+    if (baseId) rootConditions.push({ baseId });
+    if (tableId) rootConditions.push({ tableId });
 
     if (search) {
       rootConditions.push({
@@ -448,7 +506,12 @@ export class AirtableService {
       sortObj['_id'] = -1;
     }
 
-    const [rawData, total] = await Promise.all([
+    const metaQuery =
+      baseId && tableId
+        ? this.syncMetaModel.findOne({ baseId, tableId }).lean().exec()
+        : Promise.resolve(null);
+
+    const [rawData, total, syncMeta] = await Promise.all([
       this.ticketModel
         .find(filterQuery)
         .select('-__v -_id -baseId -tableId')
@@ -458,6 +521,7 @@ export class AirtableService {
         .lean()
         .exec(),
       this.ticketModel.countDocuments(filterQuery).exec(),
+      metaQuery,
     ]);
 
     const data = rawData.map((item: any) => {
@@ -465,7 +529,7 @@ export class AirtableService {
       return { ...rest, ...(fields || {}) };
     });
 
-    return { data, total, page: pageNum, limit: limitNum };
+    return { data, total, page: pageNum, limit: limitNum, syncMeta };
   }
 
   async getRevisions(query: any = {}) {
