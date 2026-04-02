@@ -39,11 +39,16 @@ export class AirtableScraperService {
   ): Promise<ScraperAuthResponse> {
     this.logger.debug(Messages.LOGS.INCOMING_REQ_SCRAPE_AUTH(email));
     this.logger.debug(Messages.LOGS.SCRAPER_AUTH_START(email));
-    const browser = await puppeteer.launch({ headless: false });
+    const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
 
     try {
-      await page.goto(AirtableUrlMapper.LOGIN);
+      await page.setUserAgent({
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      });
+      await page.goto(AirtableUrlMapper.LOGIN, { waitUntil: 'networkidle2' });
+      await page.waitForSelector('input[name="email"]', { visible: true, timeout: 15000 });
       await page.type('input[name="email"]', email);
       await page.click('button[type="submit"]');
 
