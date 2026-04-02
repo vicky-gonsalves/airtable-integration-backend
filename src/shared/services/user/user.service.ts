@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from 'src/shared/schemas/user.schema';
@@ -9,15 +9,25 @@ import { GetUsersQueryDto } from 'src/modules/airtable/dtos/airtable.dto';
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
   constructor(@InjectModel(User.name) private userModel: Model<User>) {}
 
   async upsertUsers(users: Iterable<ExtractedUser>): Promise<void> {
-    for (const user of users) {
-      await this.userModel.findOneAndUpdate(
-        { airtableId: user.airtableId },
-        { $set: user },
-        { upsert: true },
-      );
+    let upsertCount = 0;
+    try {
+      for (const user of users) {
+        await this.userModel.findOneAndUpdate(
+          { airtableId: user.airtableId },
+          { $set: user },
+          { upsert: true },
+        );
+        upsertCount++;
+      }
+      this.logger.debug(`Successfully upserted ${upsertCount} users`);
+    } catch (error: any) {
+      this.logger.error('Failed to upsert users', error.stack);
+      throw error;
     }
   }
 
@@ -58,9 +68,10 @@ export class UserService {
         this.userModel.countDocuments(filterQuery).exec(),
       ]);
 
+      this.logger.debug(`Successfully fetched ${data.length} users`);
       return { data, total, page: pageNum, limit: limitNum };
-    } catch (error) {
-      console.log(error);
+    } catch (error: any) {
+      this.logger.error('Failed to fetch users', error.stack);
       throw new BadRequestException('Failed to fetch users');
     }
   }

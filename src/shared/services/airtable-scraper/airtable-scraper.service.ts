@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -21,6 +21,7 @@ import {
 @Injectable()
 export class AirtableScraperService {
   private airtableCookies: AirtableCookie[] = [];
+  private readonly logger = new Logger(AirtableScraperService.name);
 
   constructor(
     private readonly httpService: HttpService,
@@ -34,6 +35,7 @@ export class AirtableScraperService {
     password: string,
     mfaCode: string,
   ): Promise<ScraperAuthResponse> {
+    this.logger.debug(`Authenticating scraper for email: ${email}`);
     const browser = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
 
@@ -68,7 +70,10 @@ export class AirtableScraperService {
           .catch(() => null),
       ]);
 
-      if (emailError) throw new BadRequestException(emailError);
+      if (emailError) {
+        this.logger.error(`Scraper auth email error: ${emailError}`);
+        throw new BadRequestException(emailError);
+      }
 
       await page.type('input[name="password"]', password);
       await page.click('button[type="submit"]');
@@ -99,7 +104,10 @@ export class AirtableScraperService {
           .catch(() => null),
       ]);
 
-      if (passwordError) throw new BadRequestException(passwordError);
+      if (passwordError) {
+        this.logger.error(`Scraper auth password error: ${passwordError}`);
+        throw new BadRequestException(passwordError);
+      }
 
       await page.type('input[name="code"]', mfaCode);
       await page.click('::-p-text(Submit)');
@@ -131,11 +139,16 @@ export class AirtableScraperService {
           .catch(() => null),
       ]);
 
-      if (mfaError) throw new BadRequestException(mfaError);
+      if (mfaError) {
+        this.logger.error(`Scraper auth MFA error: ${mfaError}`);
+        throw new BadRequestException(mfaError);
+      }
 
       this.airtableCookies = (await browser.cookies()) as AirtableCookie[];
+      this.logger.debug('Scraper authenticated successfully. Cookies retrieved.');
       return { success: true, message: 'Cookies retrieved' };
     } catch (err: any) {
+      this.logger.error('Failed to authenticate scraper', err.stack);
       if (err instanceof BadRequestException) throw err;
       throw new BadRequestException('Failed to authenticate scraper');
     } finally {
@@ -161,7 +174,8 @@ export class AirtableScraperService {
 
       const finalUrl = response.request?.res?.responseUrl || '';
       return !finalUrl.includes('airtable.com/login');
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error('Cookie validity check failed', error.stack);
       return false;
     }
   }
@@ -171,8 +185,11 @@ export class AirtableScraperService {
     tableId: string,
     providedCursor?: string,
   ): Promise<RevisionSyncResponse> {
+    this.logger.debug(`Starting revision sync for baseId: ${baseId}, tableId: ${tableId}`);
+
     const isValid = await this.checkCookieValidity();
     if (!isValid) {
+      this.logger.error('Scraper authentication required or cookies invalid.');
       throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
     }
 
@@ -205,11 +222,13 @@ export class AirtableScraperService {
           revisionsProcessedLastSync: 0,
         },
       );
+      this.logger.debug('No tickets found for revision sync. Sync completed.');
       return { success: true, hasMore: false, cursor: null };
     }
 
     const cookieString = this.airtableCookies.map((c) => `${c.name}=${c.value}`).join('; ');
     let totalRevisionsParsed = 0;
+    let ticketsProcessedCount = 0;
 
     const scrapePromises = tickets.map(async (ticket) => {
       let offsetV2 = null;
@@ -338,6 +357,11 @@ export class AirtableScraperService {
                   upsert: true,
                 });
                 totalRevisionsParsed++;
+                if (totalRevisionsParsed % 100 === 0) {
+                  this.logger.debug(
+                    `Revision sync progress: ${totalRevisionsParsed} revisions parsed and stored...`,
+                  );
+                }
               }
 
               if (response.data.data.offsetV2) {
@@ -357,6 +381,9 @@ export class AirtableScraperService {
           } catch (err: any) {
             const status = err.response?.status;
             if (status === 429) {
+              this.logger.warn(
+                `Rate limit hit while scraping revisions. Retrying attempt ${attempts} for ticket ${ticket.airtableId}`,
+              );
               if (attempts >= maxAttempts) {
                 hasMoreHistory = false;
                 break;
@@ -366,12 +393,25 @@ export class AirtableScraperService {
               continue;
             }
             if (status === 401 || status === 403) {
+              this.logger.error(
+                `Unauthorized error during scraping revisions for ticket ${ticket.airtableId}`,
+              );
               throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
             }
+            this.logger.error(
+              `Failed to scrape revisions for ticket ${ticket.airtableId}`,
+              err.stack,
+            );
             hasMoreHistory = false;
             break;
           }
         }
+      }
+      ticketsProcessedCount++;
+      if (ticketsProcessedCount % 50 === 0) {
+        this.logger.debug(
+          `Processed revisions for ${ticketsProcessedCount}/${tickets.length} tickets in batch...`,
+        );
       }
     });
 
@@ -390,10 +430,14 @@ export class AirtableScraperService {
       },
     );
 
+    this.logger.debug(
+      `Revision history scrape completed for batch. Total parsed: ${totalRevisionsParsed}. HasMore: ${hasMore}`,
+    );
     return { success: true, hasMore, cursor: nextCursor };
   }
 
   clearCookies(): void {
     this.airtableCookies = [];
+    this.logger.debug('Scraper cookies cleared successfully');
   }
 }

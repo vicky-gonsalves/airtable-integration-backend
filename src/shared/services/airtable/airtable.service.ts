@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -28,6 +28,7 @@ import {
 export class AirtableService {
   private pkceStore = new Map<string, string>();
   private readonly baseUrl = 'https://api.airtable.com/v0';
+  private readonly logger = new Logger(AirtableService.name);
 
   constructor(
     private readonly httpService: HttpService,
@@ -46,6 +47,7 @@ export class AirtableService {
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
 
     this.pkceStore.set(state, codeVerifier);
+    this.logger.debug('Generated Airtable authorization URL');
 
     return `https://airtable.com/oauth2/v1/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=data.records:read schema.bases:read&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
   }
@@ -64,20 +66,26 @@ export class AirtableService {
       code_verifier: codeVerifier || '',
     });
 
-    const response = await firstValueFrom(
-      this.httpService.post<AirtableTokenResponse>(
-        'https://airtable.com/oauth2/v1/token',
-        data.toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Authorization: `Basic ${credentials}`,
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post<AirtableTokenResponse>(
+          'https://airtable.com/oauth2/v1/token',
+          data.toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Authorization: `Basic ${credentials}`,
+            },
           },
-        },
-      ),
-    );
-    this.pkceStore.delete(state);
-    return response.data;
+        ),
+      );
+      this.pkceStore.delete(state);
+      this.logger.debug('Successfully exchanged code for Airtable token');
+      return response.data;
+    } catch (error: any) {
+      this.logger.error('Failed to exchange code for token', error.stack);
+      throw error;
+    }
   }
 
   async validateToken(accessToken: string): Promise<boolean> {
@@ -87,9 +95,10 @@ export class AirtableService {
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       );
+      this.logger.debug('Airtable token validated successfully');
       return true;
-    } catch (error) {
-      console.log(error);
+    } catch (error: any) {
+      this.logger.error('Token validation failed', error.stack);
       return false;
     }
   }
@@ -120,7 +129,9 @@ export class AirtableService {
 
     traverse(fields);
 
-    await this.userService.upsertUsers(usersToUpsert.values());
+    if (usersToUpsert.size > 0) {
+      await this.userService.upsertUsers(usersToUpsert.values());
+    }
   }
 
   async fetchAndStoreTickets(
@@ -131,6 +142,8 @@ export class AirtableService {
     let offset: string | undefined = undefined;
     let keepFetching = true;
     let ticketsProcessed = 0;
+
+    this.logger.debug(`Starting ticket sync for baseId: ${baseId}, tableId: ${tableId}`);
 
     await this.syncMetaModel.findOneAndUpdate(
       { baseId, tableId },
@@ -155,6 +168,10 @@ export class AirtableService {
 
           await this.extractAndUpsertUsers(record.fields);
           ticketsProcessed++;
+
+          if (ticketsProcessed % 100 === 0) {
+            this.logger.debug(`Sync progress: ${ticketsProcessed} tickets processed...`);
+          }
         }
 
         offset = response.data.offset;
@@ -170,8 +187,13 @@ export class AirtableService {
         },
       );
 
+      this.logger.debug(`Ticket sync completed successfully. Total processed: ${ticketsProcessed}`);
       return { success: true, processed: ticketsProcessed };
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(
+        `Ticket sync failed for baseId: ${baseId}, tableId: ${tableId}`,
+        error.stack,
+      );
       await this.syncMetaModel.findOneAndUpdate(
         { baseId, tableId },
         { ticketSyncStatus: 'FAILED' },
@@ -223,8 +245,8 @@ export class AirtableService {
         if (Object.keys(parsedMongoQuery).length > 0) {
           rootConditions.push(parsedMongoQuery);
         }
-      } catch (e) {
-        console.error('Failed to parse Airtable Formula', e);
+      } catch (e: any) {
+        this.logger.error('Failed to parse Airtable Formula', e.stack);
       }
     }
 
@@ -241,30 +263,36 @@ export class AirtableService {
       sortObj['_id'] = -1;
     }
 
-    const metaQuery =
-      baseId && tableId
-        ? this.syncMetaModel.findOne({ baseId, tableId }).lean().exec()
-        : Promise.resolve(null);
+    try {
+      const metaQuery =
+        baseId && tableId
+          ? this.syncMetaModel.findOne({ baseId, tableId }).lean().exec()
+          : Promise.resolve(null);
 
-    const [rawData, total, syncMeta] = await Promise.all([
-      this.ticketModel
-        .find(filterQuery)
-        .select('-__v -_id -baseId -tableId')
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limitNum)
-        .lean()
-        .exec(),
-      this.ticketModel.countDocuments(filterQuery).exec(),
-      metaQuery,
-    ]);
+      const [rawData, total, syncMeta] = await Promise.all([
+        this.ticketModel
+          .find(filterQuery)
+          .select('-__v -_id -baseId -tableId')
+          .sort(sortObj)
+          .skip(skip)
+          .limit(limitNum)
+          .lean()
+          .exec(),
+        this.ticketModel.countDocuments(filterQuery).exec(),
+        metaQuery,
+      ]);
 
-    const data = rawData.map((item: any) => {
-      const { fields, ...rest } = item;
-      return { ...rest, ...(fields || {}) };
-    });
+      const data = rawData.map((item: any) => {
+        const { fields, ...rest } = item;
+        return { ...rest, ...(fields || {}) };
+      });
 
-    return { data, total, page: pageNum, limit: limitNum, syncMeta };
+      this.logger.debug(`Successfully fetched ${data.length} tickets`);
+      return { data, total, page: pageNum, limit: limitNum, syncMeta };
+    } catch (error: any) {
+      this.logger.error('Failed to fetch tickets', error.stack);
+      throw error;
+    }
   }
 
   async getRevisions(query: GetRevisionsQueryDto = {}): Promise<PaginatedRevisionsResponse> {
@@ -275,36 +303,54 @@ export class AirtableService {
 
     const filterQuery: Record<string, any> = issueId ? { issueId } : {};
 
-    const [data, total] = await Promise.all([
-      this.revisionModel
-        .find(filterQuery)
-        .sort({ createdDate: -1 })
-        .skip(skip)
-        .limit(limitNum)
-        .exec(),
-      this.revisionModel.countDocuments(filterQuery).exec(),
-    ]);
+    try {
+      const [data, total] = await Promise.all([
+        this.revisionModel
+          .find(filterQuery)
+          .sort({ createdDate: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .exec(),
+        this.revisionModel.countDocuments(filterQuery).exec(),
+      ]);
 
-    return { data, total, page: pageNum, limit: limitNum };
+      this.logger.debug(`Successfully fetched ${data.length} revisions`);
+      return { data, total, page: pageNum, limit: limitNum };
+    } catch (error: any) {
+      this.logger.error('Failed to fetch revisions', error.stack);
+      throw error;
+    }
   }
 
   async fetchBases(accessToken: string): Promise<AirtableFetchBasesResponse> {
-    const url = 'https://api.airtable.com/v0/meta/bases';
-    const response = await firstValueFrom(
-      this.httpService.get<AirtableFetchBasesResponse>(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }),
-    );
-    return response.data;
+    try {
+      const url = 'https://api.airtable.com/v0/meta/bases';
+      const response = await firstValueFrom(
+        this.httpService.get<AirtableFetchBasesResponse>(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+      this.logger.debug('Successfully fetched Airtable bases');
+      return response.data;
+    } catch (error: any) {
+      this.logger.error('Failed to fetch Airtable bases', error.stack);
+      throw error;
+    }
   }
 
   async fetchTables(baseId: string, accessToken: string): Promise<AirtableFetchTablesResponse> {
-    const url = `https://api.airtable.com/v0/meta/bases/${baseId}/tables`;
-    const response = await firstValueFrom(
-      this.httpService.get<AirtableFetchTablesResponse>(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }),
-    );
-    return response.data;
+    try {
+      const url = `https://api.airtable.com/v0/meta/bases/${baseId}/tables`;
+      const response = await firstValueFrom(
+        this.httpService.get<AirtableFetchTablesResponse>(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+      this.logger.debug(`Successfully fetched tables for baseId: ${baseId}`);
+      return response.data;
+    } catch (error: any) {
+      this.logger.error(`Failed to fetch tables for baseId: ${baseId}`, error.stack);
+      throw error;
+    }
   }
 }
