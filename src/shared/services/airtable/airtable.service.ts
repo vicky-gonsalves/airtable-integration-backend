@@ -5,11 +5,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as crypto from 'crypto';
 import { firstValueFrom } from 'rxjs';
+import type { Response } from 'express';
 import { Ticket } from 'src/shared/schemas/ticket.schema';
 import { Revision } from 'src/shared/schemas/revision.schema';
 import { SyncMeta } from 'src/shared/schemas/sync-meta.schema';
 import { AirtableFormulaParser } from 'src/shared/utils/airtable-formula.parser';
 import { UserService } from 'src/shared/services/user/user.service';
+import { AirtableScraperService } from 'src/shared/services/airtable-scraper/airtable-scraper.service';
 import {
   PaginatedTicketsResponse,
   PaginatedRevisionsResponse,
@@ -22,6 +24,7 @@ import { ExtractedUser } from 'src/shared/interfaces/airtable-models.interface';
 import {
   GetAllTicketsQueryDto,
   GetRevisionsQueryDto,
+  AuthCallbackQueryDto,
 } from 'src/modules/airtable/dtos/airtable.dto';
 import { AirtableUrlMapper } from 'src/shared/mappers/airtable-url.mapper';
 import { Messages } from 'src/shared/constants/airtable.messages';
@@ -35,12 +38,14 @@ export class AirtableService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly userService: UserService,
+    private readonly airtableScraperService: AirtableScraperService,
     @InjectModel(Ticket.name) private ticketModel: Model<Ticket>,
     @InjectModel(Revision.name) private revisionModel: Model<Revision>,
     @InjectModel(SyncMeta.name) private syncMetaModel: Model<SyncMeta>,
   ) {}
 
   getAuthUrl(): string {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_AUTH_URL);
     const clientId = this.configService.get<string>('AIRTABLE_CLIENT_ID');
     const redirectUri = this.configService.get<string>('AIRTABLE_REDIRECT_URI');
     const state = crypto.randomBytes(16).toString('hex');
@@ -51,6 +56,41 @@ export class AirtableService {
     this.logger.debug(Messages.LOGS.AUTH_URL_GENERATED);
 
     return `${AirtableUrlMapper.OAUTH_AUTHORIZE}?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=data.records:read schema.bases:read&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+  }
+
+  async handleCallback(query: AuthCallbackQueryDto, res: Response) {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_CALLBACK);
+    try {
+      const tokenData = await this.exchangeCodeForToken(query.code, query.state);
+      res.cookie('airtable_access_token', tokenData.access_token, {
+        httpOnly: true,
+        sameSite: 'lax',
+      });
+      this.logger.debug(Messages.LOGS.CALLBACK_SUCCESS);
+      res.redirect(AirtableUrlMapper.APP_CLIENT_REDIRECT);
+    } catch (error: any) {
+      this.logger.error(Messages.LOGS.CALLBACK_FAIL, error.stack);
+      res.status(500).send(Messages.ERRORS.AUTH_FAILED);
+    }
+  }
+
+  checkAuthStatus() {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_AUTH_STATUS);
+    return {
+      authenticated: true,
+      message: Messages.SUCCESS.TOKEN_VALID,
+    };
+  }
+
+  logout(res: Response) {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_LOGOUT);
+    this.airtableScraperService.clearCookies();
+    res.clearCookie('airtable_access_token', {
+      httpOnly: true,
+      sameSite: 'lax',
+    });
+    this.logger.debug(Messages.LOGS.LOGOUT_SUCCESS);
+    return res.status(200).json({ success: true, message: Messages.SUCCESS.LOGOUT });
   }
 
   async exchangeCodeForToken(code: string, state: string): Promise<AirtableTokenResponse> {
@@ -140,6 +180,7 @@ export class AirtableService {
     tableId: string,
     accessToken: string,
   ): Promise<TicketSyncResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_SYNC(baseId, tableId));
     let offset: string | undefined = undefined;
     let keepFetching = true;
     let ticketsProcessed = 0;
@@ -202,6 +243,7 @@ export class AirtableService {
   }
 
   async getAllTickets(query: GetAllTicketsQueryDto = {}): Promise<PaginatedTicketsResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_TICKETS);
     const {
       baseId,
       tableId,
@@ -295,6 +337,7 @@ export class AirtableService {
   }
 
   async getRevisions(query: GetRevisionsQueryDto = {}): Promise<PaginatedRevisionsResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_REVISIONS(query.issueId));
     const { issueId, page = '0', limit = '20' } = query;
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
@@ -322,6 +365,7 @@ export class AirtableService {
   }
 
   async fetchBases(accessToken: string): Promise<AirtableFetchBasesResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_BASES);
     try {
       const response = await firstValueFrom(
         this.httpService.get<AirtableFetchBasesResponse>(AirtableUrlMapper.BASES, {
@@ -337,6 +381,7 @@ export class AirtableService {
   }
 
   async fetchTables(baseId: string, accessToken: string): Promise<AirtableFetchTablesResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_TABLES(baseId));
     try {
       const response = await firstValueFrom(
         this.httpService.get<AirtableFetchTablesResponse>(AirtableUrlMapper.TABLES(baseId), {

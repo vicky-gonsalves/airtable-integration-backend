@@ -37,6 +37,7 @@ export class AirtableScraperService {
     password: string,
     mfaCode: string,
   ): Promise<ScraperAuthResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_SCRAPE_AUTH(email));
     this.logger.debug(Messages.LOGS.SCRAPER_AUTH_START(email));
     const browser = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
@@ -187,6 +188,7 @@ export class AirtableScraperService {
     tableId: string,
     providedCursor?: string,
   ): Promise<RevisionSyncResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_SCRAPE_RUN(baseId, tableId));
     this.logger.debug(Messages.LOGS.SCRAPER_SYNC_START(baseId, tableId));
 
     const isValid = await this.checkCookieValidity();

@@ -33,6 +33,7 @@ export class UserService {
   }
 
   async fetchUsers(query: GetUsersQueryDto = {}): Promise<PaginatedUsersResponse> {
+    this.logger.debug(Messages.LOGS.INCOMING_REQ_USERS);
     const { page = '0', limit = '20', search = '', sortBy = '', sortOrder = 'asc' } = query;
 
     const pageNum = parseInt(page, 10);
