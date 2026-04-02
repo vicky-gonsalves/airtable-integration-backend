@@ -1,4 +1,5 @@
 import { SyncMeta } from 'src/shared/schemas/sync-meta.schema';
+import { IUser } from 'src/shared/interfaces/user.interface';
 
 export interface PaginatedTicketsResponse {
   data: any[];
@@ -10,6 +11,36 @@ export interface PaginatedTicketsResponse {
 
 export interface PaginatedRevisionsResponse {
   data: any[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface AirtableFetchBasesResponse {
+  bases: Array<{ id: string; name: string; permissionLevel?: string }>;
+}
+
+export interface AirtableFetchTablesResponse {
+  tables: Array<{ id: string; name: string; primaryFieldId?: string }>;
+}
+
+export interface PaginatedTicketsResponse {
+  data: any[];
+  total: number;
+  page: number;
+  limit: number;
+  syncMeta: SyncMeta | null;
+}
+
+export interface PaginatedRevisionsResponse {
+  data: any[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface PaginatedUsersResponse {
+  data: IUser[];
   total: number;
   page: number;
   limit: number;
@@ -38,12 +69,4 @@ export interface AirtableTokenResponse {
   refresh_token: string;
   refresh_expires_in: number;
   scope: string;
-}
-
-export interface AirtableFetchBasesResponse {
-  bases: Array<{ id: string; name: string; permissionLevel?: string }>;
-}
-
-export interface AirtableFetchTablesResponse {
-  tables: Array<{ id: string; name: string; primaryFieldId?: string }>;
 }

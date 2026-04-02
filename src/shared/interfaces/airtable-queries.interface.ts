@@ -14,3 +14,11 @@ export interface GetRevisionsQuery {
   page?: string;
   limit?: string;
 }
+
+export interface GetUsersQuery {
+  page?: string;
+  limit?: string;
+  search?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+}

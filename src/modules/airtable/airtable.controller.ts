@@ -2,6 +2,7 @@ import { Controller, Get, Post, Query, Body, Res, Req, UseGuards } from '@nestjs
 import type { Request, Response } from 'express';
 import { AirtableService } from 'src/shared/services/airtable/airtable.service';
 import { AirtableAuthGuard } from 'src/shared/guards/airtable-auth/airtable-auth.guard';
+import type { GetUsersQuery } from 'src/shared/interfaces/airtable-queries.interface';
 
 @Controller('airtable')
 export class AirtableController {
@@ -87,7 +88,7 @@ export class AirtableController {
   }
 
   @Get('users')
-  async getUsers() {
-    return this.airtableService.fetchUsers();
+  async getUsers(@Query() query: GetUsersQuery) {
+    return this.airtableService.fetchUsers(query);
   }
 }

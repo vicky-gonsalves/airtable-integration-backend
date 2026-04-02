@@ -15,6 +15,7 @@ import { AirtableFormulaParser } from 'src/shared/utils/airtable-formula.parser'
 import {
   GetAllTicketsQuery,
   GetRevisionsQuery,
+  GetUsersQuery,
 } from 'src/shared/interfaces/airtable-queries.interface';
 import {
   PaginatedTicketsResponse,
@@ -25,6 +26,7 @@ import {
   AirtableTokenResponse,
   AirtableFetchBasesResponse,
   AirtableFetchTablesResponse,
+  PaginatedUsersResponse,
 } from 'src/shared/interfaces/airtable-responses.interface';
 import {
   ExtractedUser,
@@ -690,10 +692,44 @@ export class AirtableService {
     return response.data;
   }
 
-  async fetchUsers(): Promise<{ users: IUser[] }> {
+  async fetchUsers(query: GetUsersQuery = {}): Promise<PaginatedUsersResponse> {
+    const { page = '0', limit = '20', search = '', sortBy = '', sortOrder = 'asc' } = query;
+
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const skip = pageNum * limitNum;
+
+    const filterQuery: Record<string, any> = {};
+
+    if (search) {
+      filterQuery.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { airtableId: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const sortObj: Record<string, 1 | -1> = {};
+    if (sortBy) {
+      sortObj[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    } else {
+      sortObj['createdAt'] = -1;
+    }
+
     try {
-      const users = await this.userModel.find().lean<IUser[]>().exec();
-      return { users };
+      const [data, total] = await Promise.all([
+        this.userModel
+          .find(filterQuery)
+          .select('-__v')
+          .sort(sortObj)
+          .skip(skip)
+          .limit(limitNum)
+          .lean<IUser[]>()
+          .exec(),
+        this.userModel.countDocuments(filterQuery).exec(),
+      ]);
+
+      return { data, total, page: pageNum, limit: limitNum };
     } catch (error) {
       console.error('Failed to fetch users from local database', error);
       throw new BadRequestException('Failed to fetch users');
