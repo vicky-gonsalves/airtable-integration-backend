@@ -172,56 +172,101 @@ export class AirtableService {
       await page.type('input[name="email"]', email);
       await page.click('button[type="submit"]');
 
-      await page.waitForSelector('input[name="password"]');
+      const emailError = await Promise.race([
+        page
+          .waitForSelector('input[name="password"]', { visible: true, timeout: 15000 })
+          .then(() => null)
+          .catch(() => null),
+        page
+          .waitForSelector(
+            '[data-testid="auth-form-notice-error"] div[role="paragraph"], .colors-foreground-accent-negative',
+            { visible: true, timeout: 15000 },
+          )
+          .then(() =>
+            page.evaluate(() => {
+              const el =
+                document.querySelector(
+                  '[data-testid="auth-form-notice-error"] div[role="paragraph"]',
+                ) ||
+                document
+                  .querySelector('.colors-foreground-accent-negative')
+                  ?.closest('.flex.items-center')
+                  ?.querySelector('div[role="paragraph"]');
+              return el ? el.textContent : 'Invalid email provided.';
+            }),
+          )
+          .catch(() => null),
+      ]);
+
+      if (emailError) throw new BadRequestException(emailError);
+
       await page.type('input[name="password"]', password);
       await page.click('button[type="submit"]');
 
-      const loginError = await Promise.race([
+      const passwordError = await Promise.race([
         page
           .waitForSelector('input[name="code"]', { visible: true, timeout: 15000 })
-          .then(() => null),
+          .then(() => null)
+          .catch(() => null),
         page
-          .waitForSelector('.colors-foreground-accent-negative', { visible: true, timeout: 15000 })
-          .then(async (svgEl) => {
-            return page.evaluate((el) => {
-              const container = el?.closest('.flex.items-center');
-              const textEl = container?.querySelector('div[role="paragraph"]');
-              return textEl ? textEl.textContent : 'Invalid credentials provided.';
-            }, svgEl);
-          }),
+          .waitForSelector(
+            '[data-testid="auth-form-notice-error"] div[role="paragraph"], .colors-foreground-accent-negative',
+            { visible: true, timeout: 15000 },
+          )
+          .then(() =>
+            page.evaluate(() => {
+              const el =
+                document.querySelector(
+                  '[data-testid="auth-form-notice-error"] div[role="paragraph"]',
+                ) ||
+                document
+                  .querySelector('.colors-foreground-accent-negative')
+                  ?.closest('.flex.items-center')
+                  ?.querySelector('div[role="paragraph"]');
+              return el ? el.textContent : 'Invalid password provided.';
+            }),
+          )
+          .catch(() => null),
       ]);
 
-      if (loginError) {
-        throw new BadRequestException(loginError);
-      }
+      if (passwordError) throw new BadRequestException(passwordError);
 
       await page.type('input[name="code"]', mfaCode);
       await page.click('::-p-text(Submit)');
 
       const mfaError = await Promise.race([
-        page.waitForNavigation({ timeout: 15000 }).then(() => null),
         page
-          .waitForSelector('.colors-foreground-accent-negative', { visible: true, timeout: 15000 })
-          .then(async (svgEl) => {
-            return page.evaluate((el) => {
-              const container = el?.closest('.flex.items-center');
-              const textEl = container?.querySelector('div[role="paragraph"]');
-              return textEl ? textEl.textContent : 'Invalid MFA code provided.';
-            }, svgEl);
-          }),
+          .waitForNavigation({ timeout: 15000 })
+          .then(() => null)
+          .catch(() => null),
+        page
+          .waitForSelector(
+            '[data-testid="auth-form-notice-error"] div[role="paragraph"], .colors-foreground-accent-negative, div[role="alert"]',
+            { visible: true, timeout: 15000 },
+          )
+          .then(() =>
+            page.evaluate(() => {
+              const el1 = document.querySelector(
+                '[data-testid="auth-form-notice-error"] div[role="paragraph"]',
+              );
+              const el2 = document
+                .querySelector('.colors-foreground-accent-negative')
+                ?.closest('.flex.items-center')
+                ?.querySelector('div[role="paragraph"]');
+              const el3 = document.querySelector('div[role="alert"] .small.strong.quiet');
+              const el = el1 || el2 || el3;
+              return el ? el.textContent : 'Invalid MFA code provided.';
+            }),
+          )
+          .catch(() => null),
       ]);
 
-      if (mfaError) {
-        throw new BadRequestException(mfaError);
-      }
+      if (mfaError) throw new BadRequestException(mfaError);
 
       this.airtableCookies = await browser.cookies();
       return { success: true, message: 'Cookies retrieved' };
     } catch (err: any) {
-      console.log(err);
-      if (err instanceof BadRequestException) {
-        throw err;
-      }
+      if (err instanceof BadRequestException) throw err;
       throw new BadRequestException('Failed to authenticate scraper');
     } finally {
       await browser.close();
@@ -253,13 +298,8 @@ export class AirtableService {
   }
 
   async scrapeRevisionHistory(baseId: string, tableId: string, providedCursor?: string) {
-    console.log(
-      `[Scraper] Starting scrape for Base: ${baseId}, Table: ${tableId}, Cursor: ${providedCursor || 'None'}`,
-    );
-
     const isValid = await this.checkCookieValidity();
     if (!isValid) {
-      console.error('[Scraper Error] Cookies expired or invalid.');
       throw new BadRequestException('SCRAPER_AUTH_REQUIRED');
     }
 
@@ -283,10 +323,7 @@ export class AirtableService {
     const batchSize = 500;
     const tickets = await this.ticketModel.find(query).sort({ _id: 1 }).limit(batchSize);
 
-    console.log(`[Scraper] Found ${tickets.length} tickets to process in this batch.`);
-
     if (tickets.length === 0) {
-      console.log('[Scraper] No more tickets to process.');
       await this.syncMetaModel.findOneAndUpdate(
         { baseId, tableId },
         {
@@ -304,8 +341,6 @@ export class AirtableService {
     const scrapePromises = tickets.map(async (ticket) => {
       let offsetV2 = null;
       let hasMoreHistory = true;
-
-      console.log(`[Scraper] Processing ticket: ${ticket.airtableId}`);
 
       while (hasMoreHistory) {
         const params = {
