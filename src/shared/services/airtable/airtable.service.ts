@@ -70,7 +70,7 @@ export class AirtableService {
       res.redirect(AirtableUrlMapper.APP_CLIENT_REDIRECT);
     } catch (error: any) {
       this.logger.error(Messages.LOGS.CALLBACK_FAIL, error.stack);
-      res.status(500).send(Messages.ERRORS.AUTH_FAILED);
+      res.redirect(AirtableUrlMapper.APP_CLIENT_REDIRECT);
     }
   }
 
