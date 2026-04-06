@@ -184,6 +184,7 @@ export class AirtableService {
     let offset: string | undefined = undefined;
     let keepFetching = true;
     let ticketsProcessed = 0;
+
     const fetchedAirtableIds: string[] = [];
 
     this.logger.debug(Messages.LOGS.SYNC_TICKETS_START(baseId, tableId));
@@ -199,9 +200,37 @@ export class AirtableService {
         const baseUrl = AirtableUrlMapper.RECORDS(baseId, tableId);
         const url = `${baseUrl}${offset ? `?offset=${offset}` : ''}`;
 
-        const response = await firstValueFrom(
-          this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
-        );
+        let response;
+        let attempt = 0;
+        const maxRetries = 3;
+
+        while (attempt < maxRetries) {
+          try {
+            response = await firstValueFrom(
+              this.httpService.get(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
+            );
+            break;
+          } catch (error: any) {
+            if (error.response?.status === 429) {
+              attempt++;
+              this.logger.warn(
+                `Airtable rate limit hit (429) on attempt ${attempt}. Waiting 30 seconds before retrying...`,
+              );
+
+              if (attempt >= maxRetries) {
+                this.logger.error(`Max retries reached for Airtable rate limits.`);
+                throw error;
+              }
+              await this.sleep(30000);
+            } else {
+              throw error;
+            }
+          }
+        }
+
+        if (!response || !response.data) {
+          throw new Error('Failed to retrieve data from Airtable after retries.');
+        }
 
         for (const record of response.data.records) {
           fetchedAirtableIds.push(record.id);
@@ -221,7 +250,12 @@ export class AirtableService {
         }
 
         offset = response.data.offset;
-        if (!offset) keepFetching = false;
+
+        if (!offset) {
+          keepFetching = false;
+        } else {
+          await this.sleep(250);
+        }
       }
 
       const deleteResult = await this.ticketModel.deleteMany({
@@ -407,5 +441,9 @@ export class AirtableService {
       this.logger.error(Messages.LOGS.TABLES_FETCH_FAIL(baseId), error.stack);
       throw error;
     }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
