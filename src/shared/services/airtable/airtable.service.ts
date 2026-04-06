@@ -184,6 +184,7 @@ export class AirtableService {
     let offset: string | undefined = undefined;
     let keepFetching = true;
     let ticketsProcessed = 0;
+    const fetchedAirtableIds: string[] = [];
 
     this.logger.debug(Messages.LOGS.SYNC_TICKETS_START(baseId, tableId));
 
@@ -203,6 +204,8 @@ export class AirtableService {
         );
 
         for (const record of response.data.records) {
+          fetchedAirtableIds.push(record.id);
+
           await this.ticketModel.findOneAndUpdate(
             { airtableId: record.id },
             { airtableId: record.id, baseId, tableId, fields: record.fields },
@@ -219,6 +222,16 @@ export class AirtableService {
 
         offset = response.data.offset;
         if (!offset) keepFetching = false;
+      }
+
+      const deleteResult = await this.ticketModel.deleteMany({
+        baseId,
+        tableId,
+        airtableId: { $nin: fetchedAirtableIds },
+      });
+
+      if (deleteResult.deletedCount > 0) {
+        this.logger.debug(`Cleaned up ${deleteResult.deletedCount} deleted tickets from local DB.`);
       }
 
       await this.syncMetaModel.findOneAndUpdate(
